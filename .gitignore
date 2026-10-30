@@ -4,6 +4,8 @@ config/providers.env
 *.env
 !.env.example
 !*/*.env.example
+# Bundled presets carry no secrets
+!presets/*.env
 
 # Backup and temporary files
 *.bak
@@ -11,3 +13,7 @@ config/providers.env
 *.swp
 *~
 .DS_Store
+
+# Python bytecode
+__pycache__/
+*.pyc

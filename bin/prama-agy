@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# prama-agy — Shortcut launcher for Agy (Antigravity CLI) via prama-agent
+# prama-agy — Shortcut: 'prama-agy <zona> [opciones]' equals 'prama-agent agy <zona> [opciones]'
 # Licensed under the Apache License, Version 2.0
 set -u
-
+MAIN="$(dirname "$(readlink -f "$0")")/prama-agent"
 case "${1:-}" in
-  status|list|ls|ps|attach|a|stop|kill|k|restart|r|logs|peek|log|send|inject|worktree|worktrees|wt|profiles|providers|mcp|doctor|fix|info|-h|--help|-v|--version)
-    exec prama-agent "$@"
-    ;;
+  status|ls|ps|sessions|attach|a|stop|kill|restart|logs|capture|send|worktree|wt|profiles|mcp|doctor|info|bus|cockpit|fzf|telegram|-h|--help|-v|--version)
+    exec "$MAIN" "$@" ;;
 esac
-
-exec prama-agent agy "$@"
+exec "$MAIN" agy "$@"

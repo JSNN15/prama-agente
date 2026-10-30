@@ -10,11 +10,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install tmux
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux git
+      - name: Install dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux git jq shellcheck python3
 
-      - name: Run syntax lint and E2E test suite
-        run: make test
+      - name: Lint (bash -n, shellcheck, py_compile)
+        run: make lint
+
+      - name: Test suite (isolated tmux server)
+        run: bash tests/test_prama_agent.sh
