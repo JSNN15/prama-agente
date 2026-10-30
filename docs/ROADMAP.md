@@ -46,6 +46,18 @@ self-improving assistant that also codes.
 3. Resuming a specific conversation by id.
 4. A week of real use on mechanical tasks (tests, scoped refactors, docs) with acceptable quality.
 
+## Remote hosts over SSH (planned)
+
+Launch and supervise agents on other servers from the same prama-agent, so one cockpit can hold a team
+spread across machines.
+
+- Design: a `HOSTS` registry (`name → ssh target`) and zones qualified by host (`build:backend`). Each
+  remote host runs its own prama-agent (installed with the one-line installer); the local one drives it
+  through `ssh <host> prama-agent … --json`, which already covers launch, fleet status, bus and capture.
+- The cockpit attaches to remote sessions with `ssh -t <host> prama-agent attach <session>` panes.
+- Open questions: SSH multiplexing (`ControlMaster`) for a responsive TUI, bus events across hosts,
+  and credentials (each host keeps its own agent logins and `providers.env`).
+
 ## Next
 
 - Credit and rate-limit telemetry for OpenRouter-backed agents (OpenRouter key endpoint).
@@ -102,6 +114,19 @@ general que se mejora a sí mismo y que también programa.
 3. Reanudar una conversación concreta por id.
 4. Una semana de uso real en tareas mecánicas (tests, refactors acotados, documentación) con calidad
    aceptable.
+
+### Servidores remotos por SSH (planificado)
+
+Lanzar y supervisar agentes en otros servidores desde el mismo prama-agent, para que un mismo cockpit
+muestre un equipo repartido entre máquinas.
+
+- Diseño: un registro `HOSTS` (`nombre → destino ssh`) y zonas calificadas por host (`build:backend`).
+  Cada servidor remoto corre su propio prama-agent (instalado con el instalador de una línea); el local
+  lo controla con `ssh <host> prama-agent … --json`, que ya cubre lanzar, estado de la flota, bus y
+  captura de pantalla.
+- El cockpit se conecta a sesiones remotas con paneles `ssh -t <host> prama-agent attach <sesión>`.
+- Pendiente de definir: multiplexación SSH (`ControlMaster`) para que la TUI responda rápido, eventos
+  del bus entre servidores y credenciales (cada servidor mantiene sus propios logins y `providers.env`).
 
 ### Próximos pasos
 

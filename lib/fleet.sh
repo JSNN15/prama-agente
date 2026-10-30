@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # lib/fleet.sh — Fleet management API (used by humans and by coordinator agents)
+# Copyright 2026 Julian Neira Nova
 # Licensed under the Apache License, Version 2.0
 #
 #   prama-agent fleet status [--json]
@@ -114,11 +115,13 @@ _fleet_status() {
   local n=0 st info model wd q
   wd=$(watchdog_running && printf 'watchdog ●' || printf 'watchdog ○')
   box_top "⚑ FLOTA" "$wd · máx ${PRAMA_FLEET_MAX:-8}" "$C_BORDER_HI"
-  while IFS= read -r s; do
+  local depth ind
+  while IFS='|' read -r s depth _; do
     (( n++ ))
+    ind=''; (( depth )) && ind='└ '
     st=$(detect_session_state "$s")
     model=$(health_get "$s" MODEL "$(state_get "$s" MODEL)")
-    box_row "$C_BORDER_HI" "$(state_badge "$st")  ${C_BOLD}$s${C_OFF}  ${C_MUTED}$(state_get "$s" AGENT) · $(session_role "$s") · ${model:-modelo por defecto}${C_OFF}$( [ -n "$(state_get "$s" PRESET)" ] && printf ' · preset %s' "$(state_get "$s" PRESET)")"
+    box_row "$C_BORDER_HI" "$ind$(state_badge "$st")  ${C_BOLD}$s${C_OFF}  ${C_MUTED}$(state_get "$s" AGENT) · $(session_role "$s") · ${model:-modelo por defecto}${C_OFF}$( [ -n "$(state_get "$s" PRESET)" ] && printf ' · preset %s' "$(state_get "$s" PRESET)")"
     q=$(quota_label "$s")
     [ -n "$q" ] && box_row "$C_BORDER_HI" "    ${C_MUTED}◔ $q${C_OFF}"
     if [ "$st" = BLOCKED ]; then
@@ -126,9 +129,9 @@ _fleet_status() {
       box_row "$C_BORDER_HI" "    ${C_ERR}▲ ${info%%|*}${C_OFF} ${C_MUTED}$(truncate_cols "${info#*|}" $(( W - 20 )))${C_OFF}"
     fi
     (( $(queue_len "$s") > 0 )) && box_row "$C_BORDER_HI" "    ${C_BRASS}$(queue_len "$s") tarea(s) en cola${C_OFF}"
-  done < <(prama_sessions)
+  done < <(prama_team_order)
   (( n == 0 )) && box_row "$C_BORDER_HI" "${C_MUTED}(Sin agentes activos)${C_OFF}"
-  box_bottom "fleet spawn · model · edit · restart · kill" "$C_BORDER_HI"
+  box_bottom "swarm · cockpit · fleet spawn|model|edit|restart|kill" "$C_BORDER_HI"
 }
 
 _fleet_spawn() {

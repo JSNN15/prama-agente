@@ -12,13 +12,14 @@ Internal design reference for contributors (English only). User documentation:
 | `lib/ui.sh` | Theme, display-width aware box engine, widgets (`state_badge`, `draw_gauge`, …) |
 | `lib/agents.sh` | Per-agent CLI flag builders, provider profiles, git worktrees |
 | `lib/roles.sh` | Role prompts, in-pane supervisor (`internal_runner`), daemon loop |
-| `lib/bus.sh` | `prama-agent bus …`, swarm wizard, cockpit |
+| `lib/bus.sh` | `prama-agent bus …`: assign, report, broadcast, queues, events |
+| `lib/swarm.sh` | Teams (`swarm`), the dynamic team cockpit, in-tmux navigation (`--internal-nav`) |
 | `lib/health.sh` | CLI hooks (claude, agy) → health file, status line → quota file, `BLOCKED`/quota alerts, fleet watchdog, queued delivery |
 | `lib/fleet.sh` | `prama-agent fleet …`: spawn/kill/model/edit/restart with guard rails |
 | `lib/telegram.sh` + `lib/telegram_bot.py` | Telegram bridge |
 | `lib/tui.sh` | Interactive full-screen TUI |
 
-Source order: `core.sh` → `ui.sh` → `agents.sh` → `roles.sh` → `bus.sh` → `health.sh` → `fleet.sh` →
+Source order: `core.sh` → `ui.sh` → `agents.sh` → `roles.sh` → `bus.sh` → `swarm.sh` → `health.sh` → `fleet.sh` →
 `telegram.sh` → `tui.sh`. `--internal-hook` and `--internal-statusline` are fast paths that only source
 `core.sh` + `health.sh`; outside prama panes the hook exits before sourcing anything (agy's hooks are
 global), and the status line reuses its last output for `PRAMA_SL_MIN` seconds using bash builtins only
@@ -62,7 +63,8 @@ creates private dirs).
 | `tmx_capture <s> [lines] [ansi]` | Last N lines of the active pane |
 | `tmx_attach <s> [exec_mode]` | Attach/switch/nested-attach correctly from anywhere |
 | `prama_sessions [include_internal]` | Session names (telegram bot / cockpits skipped by default) |
-| `is_internal_session <s>` | Bot or cockpit |
+| `is_internal_session <s>` | Bot, watchdog or cockpit |
+| `prama_team_order` | `session\|depth\|zone` lines: per zone, each coordinator followed by its agents (`PARENT`) |
 | `ensure_tmux_conf [force]` | Write `$PRAMA_TMUX_CONF` and reload |
 | `state_write <s> KEY=V…` / `state_get <s> KEY [def]` / `state_remove <s>` / `state_gc` | Session metadata |
 | `session_role <s>` | Role from state, else inferred from canonical name |
@@ -120,7 +122,12 @@ The TUI reads core's process tables (`PS_COMM`, `PS_CHILDREN`, `PS_CPU`, `PS_RSS
 - `build_agent_command` reads `AGENT_MODEL AGENT_EFFORT AGENT_SID AGENT_RESUME PRESET`;
   `agent_runtime_env` exports per-agent env inside the pane (opencode: `OPENCODE_CONFIG_CONTENT`, API keys).
 - `preset_load` / `preset_find` / `preset_names` / `preset_apply_defaults` — presets (`KEY=value`, never sourced).
-- `subcmd_bus`, `subcmd_cockpit`, `swarm_wizard_menu`, `subcmd_telegram`.
+- `subcmd_bus`, `subcmd_swarm`, `subcmd_cockpit` / `cockpit_ensure <zone> [focus]`, `nav_main`, `subcmd_telegram`.
+- A team is not a separate object: the zone's coordinator plus the sessions whose `PARENT` is it.
+  `PRAMA_PARENT` overrides the parent recorded by `launch_agent`.
+- Cockpit panes are nested tmux clients attached to the real agent sessions (viewers only): rebuilding
+  the cockpit never touches an agent. Key bindings call back with `--internal-nav` and receive the
+  socket and state dir explicitly, because tmux does not pass the client's environment to them.
 
 ## Machine-readable CLI (used by the Telegram bot and scripts)
 

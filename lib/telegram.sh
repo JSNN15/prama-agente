@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # lib/telegram.sh — Telegram bridge: pairing wizard, notifications and bot daemon lifecycle
+# Copyright 2026 Julian Neira Nova
 # Licensed under the Apache License, Version 2.0
 #
 # The bot itself lives in lib/telegram_bot.py (python3, stdlib only). python3 is required ONLY for

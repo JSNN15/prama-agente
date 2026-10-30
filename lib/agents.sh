@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # lib/agents.sh — Agent CLI flag builders, provider profiles, git worktrees & the launch pipeline
+# Copyright 2026 Julian Neira Nova
 # Licensed under the Apache License, Version 2.0
 
 AVAILABLE_PROFILES=(default openrouter deepseek glm local)
@@ -426,7 +427,7 @@ launch_agent() {
     || { warn "tmux no pudo crear la sesión '$name'."; return 1; }
   state_write "$name" ROLE="$role" AGENT="$agent" ZONE="$zone" PROFILE="$profile" PERM="$perm" \
     REMOTE="$remote" MODEL="$AGENT_MODEL" EFFORT="$AGENT_EFFORT" PRESET="$PRESET" WORKTREE="$wt" \
-    SESSION_ID="$sid" PARENT="${PRAMA_SESSION:-operator}" TARGET_DIR="$target_d" STARTED_AT="$(date -Iseconds)"
+    SESSION_ID="$sid" PARENT="${PRAMA_PARENT:-${PRAMA_SESSION:-operator}}" TARGET_DIR="$target_d" STARTED_AT="$(date -Iseconds)"
   if (( ${#PASS[@]} )); then printf '%s\0' "${PASS[@]}" > "$(state_args_file "$name")"; fi
   bus_event started "${PRAMA_SESSION:-operator}" "$name" "$agent@$zone ($role, $perm${AGENT_MODEL:+, $AGENT_MODEL}${PRESET:+, preset $PRESET})"
   watchdog_ensure || true

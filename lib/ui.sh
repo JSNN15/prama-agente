@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # lib/ui.sh — Theme, display-width aware box engine and small visual widgets
+# Copyright 2026 Julian Neira Nova
 # Licensed under the Apache License, Version 2.0
 #
 # Two families of helpers live here:

@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use prama-agent in your work, please cite it as below."
+title: "prama-agent: a terminal control plane for CLI coding agents"
+type: software
+authors:
+  - given-names: Julian
+    family-names: Neira Nova
+    city: Hualpén
+    country: CL
+repository-code: "https://github.com/JSNN15/prama-agente"
+license: Apache-2.0
+version: 6.1.0
+date-released: 2026-10-30
+keywords:
+  - coding agents
+  - claude code
+  - tmux
+  - multi-agent
+  - devtools

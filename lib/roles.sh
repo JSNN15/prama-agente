@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # lib/roles.sh — Role Profiles (Coordinator, Executor, Reader, Daemon) & In-Pane Supervisor
+# Copyright 2026 Julian Neira Nova
 # Licensed under the Apache License, Version 2.0
 #
 # Public API (see docs/ARCHITECTURE.md):
@@ -66,6 +67,7 @@ Gestión de la flota (tú administras a tus agentes; todo devuelve JSON con --js
 - Estado completo (estado, bloqueo y motivo, modelo, preset, cola, cuota % y reinicio): prama-agent fleet status --json
 - Agentes disponibles y presets (perfiles con skills):              prama-agent fleet presets
 - Lanzar un agente extra:  prama-agent fleet spawn <$agents_list> $zone [--role executor|reader] [--model M] [--preset P] [--name N] [--worktree rama] [--task "instrucción inicial"]
+- Sumar varios ejecutores a tu equipo de una vez: prama-agent swarm $zone --workers agy:3 [--worker-model M] --no-open
 - Cambiar el modelo (reinicia en el mismo panel y conserva la conversación): prama-agent fleet model <sesión> <modelo>
 - Editar configuración (modelo, esfuerzo, preset, permisos):  prama-agent fleet edit <sesión> [--model M] [--effort E] [--preset P]
 - Reiniciar un agente (p. ej. tras un error):                prama-agent fleet restart <sesión>

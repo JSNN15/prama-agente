@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # lib/tui.sh — Interactive full-screen TUI: hub, new-agent wizard and reusable widgets
+# Copyright 2026 Julian Neira Nova
 # Licensed under the Apache License, Version 2.0
 #
 # Rendering model
@@ -42,7 +43,7 @@ TOAST_MSG='' TOAST_KIND=info TOAST_UNTIL=0
 KEY='' MX=0 MY=0 MB=0 ZT=''
 MODAL_TOP=1 MODAL_LEFT=1 MODAL_W=0 MODAL_H=0 MODAL_HINT=''
 HUB_NS=0
-HUB_ACTIONS=(new swarm telegram doctor)
+HUB_ACTIONS=(new swarm cockpit telegram doctor)
 declare -ga TUI_FRAME=() TUI_PREV=() TUI_ZONES=() TUI_KEYS=() TUI_KEYS_R=() HUB_ITEMS=()
 declare -ga S_NAME=() S_PID=() S_DEAD=() S_CMD=() S_ATT=() S_PATH=() S_STATE=() S_ROLE=()
 declare -ga S_CPU=() S_MEM=() S_ETIME=() S_COMM=() PV=() LP=() RP=()
@@ -700,12 +701,14 @@ _tui_help() {
       "  ${K}w$O worktree   ${K}g$O abrir al lanzar / segundo plano"
       ""
       "${M}GLOBAL$O"
-      "  ${K}n$O  nuevo agente               ${K}q$O  salir"
+      "  ${K}n$O  nuevo agente   ${K}s$O  nuevo equipo   ${K}q$O  salir"
       "  toque o clic: selecciona · segundo toque: abre"
       ""
-      "${M}DENTRO DE UN AGENTE$O"
-      "  ${K}$mk$O o toca «◂ MENU» en la barra para volver aquí;"
-      "  el agente sigue trabajando en segundo plano."
+      "${M}DENTRO DE UN AGENTE O DEL COCKPIT$O (el agente sigue)"
+      "  ${K}$mk$O  volver a este menú          (botón «◂ MENU»)"
+      "  ${K}$PRAMA_NAV_KEY$O  lista de agentes, ir a otro  («☰ AGENTES»)"
+      "  ${K}$PRAMA_COCKPIT_KEY$O  cockpit del equipo ⇄ agente  («▦ COCKPIT»)"
+      "  ${K}Ctrl+b n/p$O siguiente/anterior · ${K}Ctrl+b z$O agrandar panel"
     )
   else
     L=(
@@ -715,11 +718,11 @@ _tui_help() {
       "       ${K}x$O cerrar · ${K}c$O cockpit · ${K}f$O fzf"
       "${M}AJUSTE$O ${K}o$O rol · ${K}y$O permisos · ${K}e$O remoto"
       "       ${K}p$O perfil · ${K}w$O worktree · ${K}g$O fondo"
-      "${M}GLOBAL$O ${K}n$O nuevo · ${K}q$O salir"
+      "${M}GLOBAL$O ${K}n$O nuevo · ${K}s$O equipo · ${K}q$O salir"
       "       toque = elegir · 2º toque = abrir"
       ""
-      "${M}EN UN AGENTE$O ${K}$mk$O o «◂ MENU»"
-      "       vuelve aquí (el agente sigue)"
+      "${M}EN UN AGENTE$O ${K}$mk$O menú · ${K}$PRAMA_NAV_KEY$O agentes"
+      "       ${K}$PRAMA_COCKPIT_KEY$O cockpit ⇄ agente"
     )
   fi
   local w=68
@@ -800,11 +803,22 @@ tui_collect() {
   TUI_TG_RUNNING=0
   [ -n "${pinfo[${PRAMA_SESSION_PREFIX}-telegram-bot]+x}" ] && TUI_TG_RUNNING=1
 
-  S_NAME=() S_PID=() S_DEAD=() S_CMD=() S_ATT=() S_PATH=()
-  for s in "${order[@]}"; do
+  # Teams first (coordinator, then the agents it launched), then anything else.
+  local -A tdepth=() placed=()
+  local -a torder=()
+  local d
+  TUI_TEAM_CACHE=$(prama_team_order 2>/dev/null)
+  while IFS='|' read -r s d _; do
+    [ -n "$s" ] && [ -n "${pinfo[$s]+x}" ] || continue
+    torder+=("$s"); tdepth[$s]=$d; placed[$s]=1
+  done <<< "$TUI_TEAM_CACHE"
+  for s in "${order[@]}"; do [ -n "${placed[$s]:-}" ] || torder+=("$s"); done
+  S_NAME=() S_PID=() S_DEAD=() S_CMD=() S_ATT=() S_PATH=() S_DEPTH=()
+  for s in "${torder[@]}"; do
     is_internal_session "$s" && continue
     IFS='|' read -r pid dead cmd att path <<< "${pinfo[$s]}"
     S_NAME+=("$s") S_PID+=("$pid") S_DEAD+=("${dead:-0}") S_CMD+=("$cmd") S_ATT+=("${att:-0}") S_PATH+=("$path")
+    S_DEPTH+=("${tdepth[$s]:-0}")
   done
 
   local n=${#S_NAME[@]} i st do_m=0 sel_s=''
@@ -961,7 +975,9 @@ _tui_srow() {
   if (( sel )); then base=$T_SEL; mark='▸'; fi
   R=$T_OFF$base
   st=${S_STATE[i]}; state_color "$st"; sc=$UI_S
-  _tui_display_name "${S_NAME[i]}"; ui_fit "$UI_S" "$HC_NAME"; name=$UI_S
+  _tui_display_name "${S_NAME[i]}"
+  if (( ${S_DEPTH[i]:-0} )); then ui_fit "└ $UI_S" "$HC_NAME"; else ui_fit "$UI_S" "$HC_NAME"; fi
+  name=$UI_S
   nc=$C_TEXT
   [ "$st" = DEAD ] && nc=$C_MUTED
   (( sel )) && nc=$T_BOLD
@@ -989,7 +1005,8 @@ _tui_srow() {
 _tui_action_meta() {
   case $1 in
     new)      A_ICON='✚' A_LABEL='Nuevo agente'       A_DESC="${AGENTS[*]} en una zona" ;;
-    swarm)    A_ICON='❖' A_LABEL='Coordinar enjambre' A_DESC='coordinador + ejecutores que se hablan' ;;
+    swarm)    A_ICON='❖' A_LABEL='Nuevo equipo'       A_DESC='coordinador + N agentes en una zona' ;;
+    cockpit)  A_ICON='▦' A_LABEL='Cockpit'            A_DESC='ver un equipo en vivo, pantalla dividida' ;;
     telegram) A_ICON='➤' A_LABEL='Telegram'           A_DESC='bot 24/7: controla todo desde el móvil'
               (( TUI_TG_RUNNING )) && A_DESC='bot activo · control desde el móvil' ;;
     doctor)   A_ICON='✱' A_LABEL='Doctor'             A_DESC='diagnóstico y reparación del servidor' ;;
@@ -1020,10 +1037,10 @@ _tui_empty_lines() {
   if [ -n "$TUI_FILTER" ]; then
     msg=("$C_MUTED○$T_OFF  ${T_BOLD}Sin coincidencias para «$TUI_FILTER»$T_OFF" "" "${C_MUTED}esc limpia el filtro$T_OFF")
   else
-    local kb="$KEY_BADGE n $T_OFF"
-    (( HAS_COLOR )) || kb='[n]'
+    local kb="$KEY_BADGE n $T_OFF" ks="$KEY_BADGE s $T_OFF"
+    (( HAS_COLOR )) || { kb='[n]'; ks='[s]'; }
     msg=("$C_MUTED○$T_OFF  ${T_BOLD}Sin agentes activos$T_OFF" ""
-         "Pulsa $kb para lanzar tu primer agente"
+         "$kb un agente  ·  $ks un equipo"
          "${C_MUTED}Siguen vivos aunque cierres la terminal$T_OFF")
   fi
   if (( vh < ${#msg[@]} )); then
@@ -1121,9 +1138,15 @@ _tui_action_body() {
       BODY+=("" "Pulsa $K↵$O para elegir agente y zona.")
       ;;
     swarm)
-      _tui_para "Orquesta varios agentes que colaboran a través del bus de prama:"
-      BODY+=("" "  $K•$O Dupla coordinador + ejecutor" "  $K•$O Cockpit en pantalla dividida"
-             "  $K•$O Enviar tareas por el bus" "  $K•$O Daemon que procesa la cola" "" "Pulsa $K↵$O para abrir el asistente.")
+      _tui_para "Lanza un coordinador y varios agentes ejecutores en una zona. El coordinador recibe la lista de su equipo y tu objetivo, delega por el bus y puede sumar, cambiar de modelo o cerrar agentes."
+      BODY+=("" "  $K•$O Zona → agente ejecutor → cuántos → objetivo" "  $K•$O Se abre el cockpit del equipo al terminar"
+             "  $K•$O Si la zona ya tiene coordinador, los nuevos se suman" "" "Pulsa $K↵$O para crear el equipo.")
+      ;;
+    cockpit)
+      _tui_para "Pantalla dividida con el equipo de una zona: coordinador a la izquierda, agentes a la derecha y el bus en vivo. Se actualiza solo cuando entran o salen agentes."
+      _tui_menu_key_label
+      BODY+=("" "  $K${PRAMA_COCKPIT_KEY}$O  cockpit ⇄ agente con el foco" "  $K${PRAMA_NAV_KEY}$O  lista de agentes (ir a cualquiera)"
+             "  $K$UI_S$O  volver a este menú" "  ${K}Ctrl+b z$O  agrandar el panel con el foco" "" "Pulsa $K↵$O o ${K}c$O para abrirlo.")
       ;;
     telegram)
       _tui_para "Controla tus agentes desde el móvil con un bot de Telegram 24/7, aunque cierres Termius."
@@ -1200,9 +1223,9 @@ _tui_hub_footer() {
   if (( TUI_FILTER_EDIT )); then
     TUI_KEYS=("↵|aplicar|ENTER" "esc|limpiar|ESC" "↑↓|mover|")
   elif [[ $item == s:* ]]; then
-    TUI_KEYS=("↵|entrar|ENTER" "t|tarea|t" "n|nuevo|n" "l|logs|l" "x|cerrar|x" "r|reiniciar|r" "/|filtrar|/" "c|cockpit|c" "f|fzf|f")
+    TUI_KEYS=("↵|entrar|ENTER" "c|cockpit|c" "t|tarea|t" "l|logs|l" "r|reiniciar|r" "x|cerrar|x" "n|nuevo|n" "s|equipo|s" "/|filtrar|/")
   else
-    TUI_KEYS=("↵|abrir|ENTER" "n|nuevo|n" "/|filtrar|/" "↑↓|mover|")
+    TUI_KEYS=("↵|abrir|ENTER" "n|nuevo|n" "s|equipo|s" "c|cockpit|c" "/|filtrar|/")
   fi
   if [ "$TUI_MODE" = compact ]; then TUI_KEYS_R=("?|más|?")
   else TUI_KEYS_R=("?|ayuda|?" "q|salir|q"); fi
@@ -1338,8 +1361,8 @@ _tui_session_action() {
     t) _tui_task "$s" ;;
     l) _tui_logs "$s" ;;
     r)
-      if tui_confirm "¿Reiniciar «$short»? Se detiene el proceso actual y se vuelve a lanzar el mismo comando." 1 "Reiniciar"; then
-        if tmx respawn-pane -k -t "=$s:" 2>/dev/null; then tui_toast ok "Sesión $short reiniciada"
+      if tui_confirm "¿Reiniciar «$short»? El agente se relanza en el mismo panel y retoma su conversación." 1 "Reiniciar"; then
+        if ( _fleet_restart_in_place "$s" ) >/dev/null 2>&1; then tui_toast ok "$short se está reiniciando"
         else tui_toast err "No se pudo reiniciar $short"; fi
         tui_collect 0
       fi ;;
@@ -1354,15 +1377,71 @@ _tui_session_action() {
   esac
 }
 
+# Cockpit of the selected session's zone; without a selection, pick among zones with agents.
 _tui_cockpit() {
-  local s=${1:-} zone=''
+  local s=${1:-} zone='' z
+  local -a zs=() CK_LABELS=() CK_METAS=() CK_AVAIL=() CK_TARGETS=()
   [ -n "$s" ] && zone=$(state_get "$s" ZONE)
-  [ -n "$zone" ] || zone=${ZONE:-${ZONES[0]:-}}
-  if ! declare -F subcmd_cockpit >/dev/null; then tui_toast err "Cockpit no disponible"; return 0; fi
-  if ! _tui_run_fullscreen 1 subcmd_cockpit "$zone"; then
+  if [ -z "$zone" ]; then
+    local -A cnt=()
+    while IFS='|' read -r _ _ z; do
+      [ -n "${cnt[$z]+x}" ] || zs+=("$z")
+      cnt[$z]=$(( ${cnt[$z]:-0} + 1 ))
+    done < <(prama_team_order)
+    if (( ${#zs[@]} == 0 )); then tui_toast info "No hay agentes: crea un equipo (❖ Nuevo equipo)"; return 0; fi
+    if (( ${#zs[@]} == 1 )); then zone=${zs[0]}
+    else
+      for z in "${zs[@]}"; do
+        CK_LABELS+=("$z") CK_METAS+=("${cnt[$z]} agente(s)$(zone_coordinator "$z" >/dev/null && printf ' · con coordinador')")
+        CK_AVAIL+=(1) CK_TARGETS+=("")
+      done
+      TUI_LIST_CRUMBS="${C_MUTED}Menú$T_OFF $C_MUTED›$T_OFF ${T_BOLD}Cockpit$T_OFF"
+      local rc=0; tui_list_run "¿Qué equipo quieres ver?" CK_LABELS CK_METAS CK_AVAIL CK_TARGETS 0 || rc=$?
+      TUI_LIST_CRUMBS=''; tui_invalidate
+      (( rc )) && return 0
+      zone=${zs[CHOICE]}
+    fi
+  fi
+  if ! _tui_run_fullscreen 1 subcmd_cockpit "$zone" ${s:+--focus "$s"}; then
     tui_alert "No se pudo abrir el cockpit" "${TUI_LAST_ERR:-zona $zone}"
   fi
   tui_collect 0
+}
+
+# tui_new_team — zone → worker agent → how many → objective, then `swarm` (opens the cockpit).
+tui_new_team() {
+  local step=1 rc i zone='' wa='' n=2 task='' coord=claude
+  is_in claude "${AGENTS[@]}" && agent_installed claude || coord=${AGENTS[0]}
+  TUI_GIT_CACHE=()
+  _tui_agent_lists
+  local -a NL=() NM=() NA=() NT=()
+  for i in 1 2 3 4 5 6; do NL+=("$i"); NM+=("$i agente(s) ejecutor(es) + 1 coordinador ($coord)"); NA+=(1); NT+=(""); done
+  while :; do
+    TUI_LIST_CRUMBS="${C_MUTED}Menú$T_OFF $C_MUTED›$T_OFF ${T_BOLD}Nuevo equipo$T_OFF $C_MUTED›$T_OFF ${zone:-zona}${wa:+ · $wa}"
+    case $step in
+      1) AGENT=$coord; _tui_zone_lists
+         rc=0; tui_list_run "¿En qué zona trabajará el equipo?" ZN_LABELS ZN_METAS ZN_AVAIL ZN_TARGETS -1 || rc=$?
+         (( rc )) && break
+         zone=${ZONES[CHOICE]}; step=2 ;;
+      2) rc=0; tui_list_run "Agente para los ejecutores" AG_LABELS AG_METAS AG_AVAIL AG_TARGETS -1 || rc=$?
+         if (( rc )); then step=1; continue; fi
+         wa=${AGENTS[CHOICE]}; step=3 ;;
+      3) rc=0; tui_list_run "¿Cuántos ejecutores $wa?" NL NM NA NT 1 || rc=$?
+         if (( rc )); then step=2; continue; fi
+         n=${NL[CHOICE]}; step=4 ;;
+      4) task=''
+         tui_prompt "Objetivo para el coordinador (opcional)" task || task=''
+         TUI_LIST_CRUMBS=''; tui_invalidate
+         if ! _tui_run_fullscreen 1 subcmd_swarm "$zone" --coord "$coord" --workers "$wa:$n" ${task:+--task "$task"}; then
+           tui_alert "No se pudo crear el equipo" "${TUI_LAST_ERR:-revisa prama-agent doctor}"
+         fi
+         break ;;
+    esac
+  done
+  TUI_LIST_CRUMBS=''
+  tui_invalidate
+  tui_collect 0
+  return 0
 }
 
 _tui_fzf() {
@@ -1442,7 +1521,8 @@ _tui_hub_activate() {
   case $item in
     s:*)         tui_attach_session "${S_NAME[${item#s:}]}" ;;
     a:new)       tui_new_agent ;;
-    a:swarm)     _tui_external "Coordinar enjambre" 0 swarm_wizard_menu ;;
+    a:swarm)     tui_new_team ;;
+    a:cockpit)   _tui_cockpit "" ;;
     a:telegram)  _tui_external "Telegram" 0 subcmd_telegram menu ;;
     a:doctor)    _tui_external "Doctor" 1 subcmd_doctor ;;
   esac
@@ -1491,6 +1571,7 @@ tui_hub_handle_key() {
     END)                TUI_SEL=$(( ${#HUB_ITEMS[@]} - 1 )); _tui_hub_sel_key ;;
     ENTER|RIGHT|SPACE)  _tui_hub_activate ;;
     n|N)                tui_new_agent ;;
+    s|S)                tui_new_team ;;
     t|T|l|L|r|R|x|X)
       if [ -n "$s" ]; then _tui_session_action "${KEY,,}" "$s"
       else tui_toast info "Selecciona primero una sesión (↑↓)"; fi ;;

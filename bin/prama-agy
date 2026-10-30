@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # prama-agy — Shortcut: 'prama-agy <zona> [opciones]' equals 'prama-agent agy <zona> [opciones]'
+# Copyright 2026 Julian Neira Nova
 # Licensed under the Apache License, Version 2.0
 set -u
 MAIN="$(dirname "$(readlink -f "$0")")/prama-agent"

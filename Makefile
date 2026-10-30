@@ -1,5 +1,6 @@
-PREFIX ?= /usr/local
-CONF_DIR ?= /etc/prama-agent
+# prama-agent — developer and install targets
+# Without PREFIX/CONF_DIR, install.sh picks system paths as root (/usr/local, /etc/prama-agent)
+# and user paths otherwise (~/.local, ~/.config/prama-agent).
 SHELL_FILES := bin/prama-agent bin/prama-agy bin/prama-claude lib/*.sh install.sh tests/*.sh
 
 .PHONY: all install uninstall test lint
@@ -17,8 +18,11 @@ test: lint
 	bash tests/test_prama_agent.sh
 
 install:
-	PREFIX="$(PREFIX)" CONF_DIR="$(CONF_DIR)" bash ./install.sh
+	$(if $(PREFIX),PREFIX="$(PREFIX)") $(if $(CONF_DIR),CONF_DIR="$(CONF_DIR)") bash ./install.sh
 
 uninstall:
 	-prama-agent fleet hooks uninstall >/dev/null 2>&1
-	rm -f "$(PREFIX)/bin/prama-agent" "$(PREFIX)/bin/prama-agy" "$(PREFIX)/bin/prama-claude" /etc/bash_completion.d/prama-agent
+	@p="$(PREFIX)"; [ -n "$$p" ] || { [ "$$(id -u)" = 0 ] && p=/usr/local || p="$$HOME/.local"; }; \
+	rm -f "$$p/bin/prama-agent" "$$p/bin/prama-agy" "$$p/bin/prama-claude" \
+	      /etc/bash_completion.d/prama-agent "$$HOME/.local/share/bash-completion/completions/prama-agent"; \
+	echo "prama-agent desinstalado de $$p/bin (la configuración y el estado se conservan)"

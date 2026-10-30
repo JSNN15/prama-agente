@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # prama-agent test suite — runs on an isolated tmux server, HOME and state dir.
 # Each "regression" test maps to a finding from the v5 security/quality review.
+# Copyright 2026 Julian Neira Nova
 # Licensed under the Apache License, Version 2.0
 set -uo pipefail
 
@@ -106,7 +107,7 @@ P="tmux -L $PRAMA_TMUX_SOCKET"
 
 # ── Basics ──────────────────────────────────────────────────────────────────
 section "CLI basics"
-assert_eq "--version" "prama-agent v6.0.0" "$("$BIN" --version)"
+assert_eq "--version" "prama-agent v$(sed -n 's/^VERSION="\(.*\)"/\1/p' "$BIN")" "$("$BIN" --version)"
 out=$("$BIN" --help); assert_contains "--help lists subcommands" "bus status" "$out"
 out=$("$BIN" zones --json); assert_true "zones --json is valid JSON" "jq -e 'length == 3' >/dev/null <<< '$out'"
 out=$("$BIN" agents --json); assert_true "agents --json is valid JSON" "jq -e '.[0].installed' >/dev/null <<< '$out'"
@@ -416,6 +417,41 @@ assert_contains "…the coordinator gets the alert" "Cuota de claude al 95%" "$(
 hj=$(cat "$HOME/.gemini/config/hooks.json")
 assert_true "fleet hooks uninstall removes only prama's entry" "jq -e 'has(\"prama-agent\") | not' >/dev/null <<< '$hj' && jq -e '.mine' >/dev/null <<< '$hj'"
 "$BIN" stop --all -y >/dev/null 2>&1
+
+section "Teams, cockpit and navigation"
+out=$("$BIN" swarm alpha --workers agy:2 --task "ship /health" --no-open 2>&1)
+co=$("$BIN" fleet status --json | jq -r '.[] | select(.role=="coordinator" and .zone=="alpha") | .session')
+assert_eq "swarm launches one coordinator" "1" "$(grep -c . <<< "$co")"
+assert_eq "…and the requested workers, as its team" "2" "$("$BIN" fleet status --json | jq --arg c "$co" '[.[] | select(.parent==$c)] | length')"
+assert_contains "The coordinator gets its team brief (queued until ready)" "Tu equipo en 'alpha'" "$("$BIN" bus inbox "$co" 2>&1)"
+assert_true "…with the objective" "grep -q 'objetivo: ship /health' '$STATE/bus/events.jsonl'"
+assert_contains "fleet status shows the team as a tree" "└" "$("$BIN" fleet status)"
+"$BIN" cockpit alpha --no-attach >/dev/null 2>&1
+assert_eq "Cockpit: one pane per team member plus the bus" "4" "$($P list-panes -t '=tp-cockpit-alpha' 2>/dev/null | grep -c .)"
+PRAMA_SESSION=$co "$BIN" swarm alpha --workers agy:1 >/dev/null 2>&1
+assert_eq "A coordinator can grow its own team" "3" "$("$BIN" fleet status --json | jq --arg c "$co" '[.[] | select(.parent==$c)] | length')"
+"$BIN" cockpit alpha --no-attach >/dev/null 2>&1
+assert_eq "…and the cockpit follows the team" "5" "$($P list-panes -t '=tp-cockpit-alpha' 2>/dev/null | grep -c .)"
+out=$(PRAMA_SESSION=$co "$BIN" swarm beta --workers agy:1 2>&1); rc=$?
+assert_true "An agent cannot build a team outside its zone" "[ $rc -ne 0 ]"
+assert_contains "Navigation keys are bound on prama's tmux server" "--internal-nav pick" "$(cat "$STATE/tmux.conf")"
+assert_contains "…and the cockpit toggle" "--internal-nav cockpit" "$(cat "$STATE/tmux.conf")"
+"$BIN" swarm stop alpha >/dev/null 2>&1
+assert_eq "swarm stop closes the coordinator and its team" "0" "$("$BIN" fleet status --json | jq '[.[] | select(.zone=="alpha")] | length')"
+assert_true "…and its cockpit" "! $P has-session -t =tp-cockpit-alpha 2>/dev/null"
+"$BIN" bus swarm-start beta claude agy >/dev/null 2>&1
+assert_eq "v5 'bus swarm-start' still works (coordinator + 1 executor)" "2" "$("$BIN" fleet status --json | jq '[.[] | select(.zone=="beta")] | length')"
+"$BIN" stop --all -y >/dev/null 2>&1
+
+section "Installer"
+out=$(BASH_COMPLETION_USER_DIR="$TMP_ROOT/comp" PREFIX="$TMP_ROOT/inst" CONF_DIR="$TMP_ROOT/inst/etc" bash "$REPO_DIR/install.sh" 2>&1); rc=$?
+assert_true "install.sh from a clone links the commands" "[ $rc -eq 0 ] && [ -x '$TMP_ROOT/inst/bin/prama-agent' ]"
+assert_true "…creates config.env and a 0600 providers.env" "[ -f '$TMP_ROOT/inst/etc/config.env' ] && [ \"\$(stat -c %a '$TMP_ROOT/inst/etc/providers.env')\" = 600 ]"
+git clone -q --bare "$REPO_DIR" "$TMP_ROOT/remote.git" 2>/dev/null
+out=$(cat "$REPO_DIR/install.sh" | BASH_COMPLETION_USER_DIR="$TMP_ROOT/comp" PRAMA_REPO_URL="$TMP_ROOT/remote.git" PRAMA_HOME="$TMP_ROOT/boot/src" \
+      PREFIX="$TMP_ROOT/boot" CONF_DIR="$TMP_ROOT/boot/etc" bash 2>&1); rc=$?
+assert_true "One-line install (piped) clones and installs" "[ $rc -eq 0 ] && [ -x '$TMP_ROOT/boot/bin/prama-agent' ] && [ -d '$TMP_ROOT/boot/src/.git' ]"
+assert_contains "…and the installed command runs" "prama-agent v" "$("$TMP_ROOT/boot/bin/prama-agent" --version 2>&1)"
 
 section "Presets"
 mkdir -p "$XDG_CONFIG_HOME/prama-agent/presets/skills/db-migrations"

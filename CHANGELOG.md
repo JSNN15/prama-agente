@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [6.1.0] - 2026-10-30
+
+### Added
+- **Teams**: `prama-agent swarm <zone> --workers agy:3 [--coord claude] [--task "…"]` launches a
+  coordinator and N workers in one step; the coordinator receives its team and the objective, and can
+  grow its own team. `swarm stop <zone>` closes a team.
+- **Dynamic cockpit**: one pane per team member (coordinator large on the left) plus the live bus;
+  rebuilt automatically when agents join or leave. `cockpit <zone|session>`.
+- **Navigation inside tmux**: `Alt+a` agent picker (teams, state, model, quota), `Alt+c` cockpit ⇄
+  agent, `Ctrl+b n/p` next/previous agent; tappable `◂ MENU · ☰ AGENTES · ▦ COCKPIT` status-bar
+  buttons (tmux ≥ 3.3).
+- TUI: sessions grouped as teams, `s` new-team wizard, cockpit action with team picker; restart keeps
+  the conversation.
+- One-line installer (`curl … | bash`, per-user without root) and `prama-agent update [version]`.
+- NOTICE, CITATION.cff and author information.
+
+### Changed
+- The swarm submenu was replaced by "Nuevo equipo" and "Cockpit"; `bus swarm-start` remains as a
+  compatibility alias.
+- `make install` without `sudo` installs for the current user.
+
 ## [6.0.0] - 2026-10-30
 
 A rewrite focused on safety, determinism and fleet management.

@@ -6,6 +6,7 @@
 [![Licencia: Apache-2.0](https://img.shields.io/badge/licencia-Apache--2.0-blue.svg)](LICENSE)
 ![bash ≥ 4.4](https://img.shields.io/badge/bash-%E2%89%A5%204.4-4EAA25)
 ![tmux ≥ 3.2](https://img.shields.io/badge/tmux-%E2%89%A5%203.2-1BB91F)
+![Release](https://img.shields.io/github/v/release/JSNN15/prama-agente)
 
 **Plano de control en la terminal para agentes de código.** prama-agent lanza, supervisa y coordina
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) y Google Antigravity (`agy`) en varios
@@ -17,17 +18,17 @@ bloqueado por un login, una cuota o un problema de facturación.
 Es bash sobre un servidor tmux dedicado: sin daemon que instalar, sin base de datos, sin Node.js.
 
 ```
- ◆ PRAMA AGENT v6.0.0  server-01                   ● 3 activos · 1 trabajando   LOAD 1.63 · RAM 21%
+ ◆ PRAMA AGENT v6.1.0  server-01                   ● 3 activos · 1 trabajando   LOAD 1.63 · RAM 21%
  Próximo agente ›  o  Rol ✦ executor   y  Permisos ● ASK   e  Remoto off   p  Perfil default
-╭─ Sesiones ───────────────────────────────── 3 ─╮╭─ ◉ prama-agy-web ─────────────────────────────╮
-│   ● agy-web          ✦ exec  trabaja ▱▱▱▱   0% ││ ✦ executor · ● trabaja · CPU 3% · up 04:12    │
-│ ▸ ● claude-backend   ✦ exec  listo   ▰▰▱▱  54% │├─ en vivo ─────────────────────────────────────┤
-│   ● claude-backend   ❖ coord listo   ▱▱▱▱   0% ││ > agrega endpoint /health                     │
+╭─ Sesiones ───────────────────────────────── 3 ─╮╭─ ◉ prama-agy-backend ─────────────────────────╮
+│   ● claude-backend   ❖ coord listo   ▱▱▱▱   0% ││ ✦ executor · ● trabaja · CPU 3% · up 04:12    │
+│ ▸ ● └ agy-backend    ✦ exec  trabaja ▰▰▱▱  54% │├─ en vivo ─────────────────────────────────────┤
+│   ● └ agy-backend-2  ✦ exec  listo   ▱▱▱▱   0% ││ > agrega endpoint /health                     │
 ├─ Acciones ─────────────────────────────────────┤│ Thinking… editando src/routes/health.ts       │
-│   ✚ Nuevo agente         claude o agy en zona ││                                               │
-│   ❖ Coordinar enjambre   coordinador + ejecut… ││                                               │
-╰────────────────────────────────────────────────╯╰───────────────────── ↵ entrar · t tarea · l logs ─╯
-  ↵  entrar  t  tarea  n  nuevo  l  logs  x  cerrar  r  reiniciar  /  filtrar  c  cockpit  ?  ayuda
+│   ✚ Nuevo agente         claude o agy en zona  ││                                               │
+│   ❖ Nuevo equipo         coordinador + N agen… ││                                               │
+╰────────────────────────────────────────────────╯╰───────────────── ↵ entrar · t tarea · l logs ─╯
+  ↵  entrar  c  cockpit  t  tarea  l  logs  r  reiniciar  x  cerrar  n  nuevo  s  equipo  ?  ayuda
 ```
 
 ## Por qué
@@ -52,19 +53,25 @@ la conexión SSH. prama-agent las convierte en una flota supervisada:
 ## Instalación
 
 ```bash
-git clone https://github.com/JSNN15/prama-agente.git && cd prama-agente
-sudo make install            # o por usuario: make install PREFIX=~/.local CONF_DIR=~/.config/prama-agent
+curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agente/main/install.sh | sudo bash
 prama-agent doctor           # verifica dependencias, agentes, hooks y configuración
 ```
 
-Requisitos: bash ≥ 4.4, tmux ≥ 3.2, git. Recomendados: `jq` (hooks y telemetría de cuota), `fzf`,
-`less`. El puente opcional con Telegram necesita `python3` y `curl`. Al menos un CLI de agente:
-`claude` (Claude Code) o `agy` (Antigravity CLI).
+Sin `sudo` se instala para tu usuario (`~/.local/bin`, `~/.config/prama-agent`). Desde un clon:
+`sudo make install` o `make install`. Para actualizar: `prama-agent update` (o `update v6.1.0`).
+
+Requisitos: bash ≥ 4.4, tmux ≥ 3.2 (3.3+ para los botones táctiles de la barra), git. Recomendados:
+`jq` (hooks y telemetría de cuota), `fzf`, `less`. El puente opcional con Telegram necesita `python3`
+y `curl`. Al menos un CLI de agente: `claude` (Claude Code) o `agy` (Antigravity CLI). Por defecto, las
+zonas son los repositorios git que hay en `/opt` y `$HOME`; nómbralas en `config.env` si quieres alias
+cortos.
 
 ## Uso rápido
 
 ```bash
 prama-agent                                   # interfaz interactiva
+prama-agent swarm backend --workers agy:3 --task "Agrega rate limiting a la API pública"
+                                              # coordinador + 3 agy, abre el cockpit del equipo
 prama-agent claude backend                    # lanza Claude Code en la zona "backend" y entra
 prama-agent agy web --bg -w feat/login        # en segundo plano, aislado en un git worktree
 prama-agent claude backend --role reader      # auditor de solo lectura (plan mode)
@@ -80,20 +87,49 @@ Una **zona** es un directorio de trabajo con nombre, normalmente un repositorio.
 | Tecla | Acción | Tecla | Acción |
 | --- | --- | --- | --- |
 | `↑↓` `jk` `1-9` | moverse | `↵` | entrar a la sesión / elegir |
-| `n` | nuevo agente (asistente) | `t` | enviar una tarea a la sesión |
+| `n` | nuevo agente (asistente) | `s` | nuevo equipo (coordinador + N agentes) |
+| `c` | cockpit del equipo | `t` | enviar una tarea a la sesión |
 | `l` | historial (`less`) | `r` / `x` | reiniciar / cerrar (con confirmación) |
 | `/` | filtrar sesiones | `f` | inspector `fzf` con vista previa |
-| `c` | cockpit (coordinador + ejecutor + bus) | `?` | ayuda |
+| `?` | ayuda | | |
 | `o` `y` `e` `p` `w` `g` | rol · permisos · remoto · perfil LLM · worktree · segundo plano | `q` | salir |
 
-Se adapta al ancho (lista y vista previa lado a lado desde 100 columnas, apiladas en el celular), se
-refresca cada 2 s y admite toques y rueda del ratón. Desde un agente, `Alt+m` (o `◂ MENU` en la barra
-inferior) vuelve al menú sin detenerlo.
+Las sesiones se listan por equipo (el coordinador y debajo sus agentes). La interfaz se adapta al ancho
+(lista y vista previa lado a lado desde 100 columnas, apiladas en el celular), se refresca cada 2 s y
+admite toques y rueda del ratón.
+
+## Equipos y cockpit
+
+```bash
+prama-agent swarm backend                         # coordinador (claude) + PRAMA_SWARM_WORKERS (agy:2)
+prama-agent swarm backend --workers agy:2,claude:1 --worker-model gemini-3.8-flash-high
+prama-agent cockpit backend                       # vista dividida del equipo en vivo
+prama-agent swarm stop backend                    # cierra el coordinador y sus agentes
+```
+
+El coordinador recibe la lista de su equipo y el objetivo apenas está listo, delega por el bus y puede
+hacer crecer el equipo él mismo (`swarm <su zona> --workers agy:2`), cambiar modelos o cerrar agentes.
+Si la zona ya tiene coordinador, los nuevos ejecutores se suman a su equipo.
+
+El **cockpit** muestra al coordinador a la izquierda, sus agentes apilados a la derecha y el bus en vivo
+abajo; se reconstruye solo cuando entran o salen agentes. Dentro del tmux de prama, desde cualquier
+agente o desde el cockpit:
+
+| Tecla | Botón de la barra | Acción |
+| --- | --- | --- |
+| `Alt+m` | `◂ MENU` | volver al menú (los agentes siguen trabajando) |
+| `Alt+a` | `☰ AGENTES` | lista de agentes (equipos, estado, modelo, cuota): ir a cualquiera o a un cockpit |
+| `Alt+c` | `▦ COCKPIT` | cockpit del equipo ⇄ el agente con el foco |
+| `Ctrl+b n` / `Ctrl+b p` | | agente siguiente / anterior |
+| `Ctrl+b z` | | agrandar el panel con el foco en el cockpit |
+
+Las teclas se configuran con `PRAMA_MENU_KEY`, `PRAMA_NAV_KEY` y `PRAMA_COCKPIT_KEY`; los botones
+funcionan con toques en Termius.
 
 ## Administración de la flota
 
-Todo lo siguiente está disponible para ti y para un agente coordinador; `--json` da salida para
-máquinas.
+La API detallada que usan los equipos, disponible para ti y para el coordinador; `--json` da salida
+para máquinas.
 
 ```bash
 prama-agent fleet status --json              # estado, motivo de bloqueo, modelo, preset, cola, cuota
@@ -138,9 +174,9 @@ encadena.
 | `♺ daemon` | procesa una cola de tareas en bucle (`--loop 60 --task "…"`) |
 
 ```bash
-prama-agent bus swarm-start backend claude agy   # coordinador (claude) + ejecutor (agy)
-prama-agent cockpit backend                      # vista dividida: ambos agentes + bus en vivo
-prama-agent bus assign executor "Implementa /health y corre pytest"
+prama-agent bus assign prama-agy-backend-2 "Implementa /health y corre pytest"
+prama-agent bus assign executor "…"              # por rol: el ejecutor más reciente
+prama-agent bus report "Endpoint listo; 18/18 tests ok"
 prama-agent bus watch                            # eventos en vivo
 ```
 
@@ -211,7 +247,8 @@ prama-agent claude backend --profile deepseek
 | `PRAMA_HOOKS` / `PRAMA_STATUSLINE` | `1` / `1` | hooks de salud / telemetría de cuota |
 | `PRAMA_QUOTA_WARN` | `90` | umbral de alerta de cuota (%) |
 | `PRAMA_WATCHDOG` | `1` | watchdog de la flota |
-| `PRAMA_MENU_KEY` | `M-m` | tecla para volver del agente al menú |
+| `PRAMA_SWARM_WORKERS` | `agy:2` | ejecutores por defecto de `swarm` |
+| `PRAMA_MENU_KEY` / `PRAMA_NAV_KEY` / `PRAMA_COCKPIT_KEY` | `M-m` / `M-a` / `M-c` | teclas de navegación en tmux |
 | `PRAMA_EXPERIMENTAL` | `0` | habilita agentes experimentales (OpenCode) |
 
 Los **worktrees** (`-w <rama>`) se crean fuera del repositorio
@@ -226,6 +263,8 @@ Los **worktrees** (`-w <rama>`) se crean fuera del repositorio
 | Antigravity (`agy`) | soportado: hooks, cuota, reanudación, validación de modelos, control remoto |
 | OpenCode | **experimental**: integrado y probado, desactivado por defecto (`PRAMA_EXPERIMENTAL=1`) |
 | Hermes Agent | **en evaluación**, no integrado |
+
+Lanzar agentes en otros servidores por SSH desde el mismo prama-agent está planificado.
 
 OpenCode y Hermes son los dos candidatos serios para usar modelos abiertos (Qwen, Kimi, GLM,
 DeepSeek) vía OpenRouter como agentes de bajo costo. La evaluación y los criterios para habilitarlos
@@ -248,6 +287,12 @@ make test     # suite de extremo a extremo en un servidor tmux, HOME y estado ai
 Arquitectura, invariantes de seguridad y API interna: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 (en inglés). Contribuir: [CONTRIBUTING.md](CONTRIBUTING.md). Cambios: [CHANGELOG.md](CHANGELOG.md).
 
+## Autor
+
+Creado y mantenido por **Julian Neira Nova** (Hualpén, Chile) · [@JSNN15](https://github.com/JSNN15).
+Si usas prama-agent en tu trabajo, [CITATION.cff](CITATION.cff) tiene la cita.
+
 ## Licencia
 
-[Apache License 2.0](LICENSE)
+[Apache License 2.0](LICENSE) · ver [NOTICE](NOTICE). Claude Code y Antigravity son marcas de sus
+respectivos dueños; este es un proyecto independiente.

@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# lib/bus.sh — Multi-agent communication bus, guided swarm wizard & cockpit
+# lib/bus.sh — Multi-agent communication bus (teams and the cockpit live in lib/swarm.sh)
+# Copyright 2026 Julian Neira Nova
 # Licensed under the Apache License, Version 2.0
 #
 # Public API:
 #   subcmd_bus <status|assign|report|broadcast|inbox|watch|clear|swarm-start|help> [args...]
-#   subcmd_cockpit [zone] [coord_agent] [exec_agent]
-#   swarm_wizard_menu
 #   resolve_bus_target <target>   → sets BUS_TARGET BUS_TARGET_KIND(session|role|none) BUS_TARGET_NOTE
 #   bus_session_state <session>   → prints DEAD|BOT|STANDBY|DAEMON|WORKING|SHELL|READY
 #   bus_can_inject <session>      → 0 if it is safe to type into the session
@@ -216,7 +215,7 @@ Uso: prama-agent bus <acción>
   inbox [sesión] [--pop]         Lista (o extrae) las tareas pendientes en una cola
   watch                          Vista en vivo de los eventos del bus (Ctrl-C para salir)
   clear [-y|--yes]               Vacía el registro de eventos y todas las colas
-  swarm-start [zona] [coord] [exec]  Lanza una dupla Coordinador + Ejecutor en segundo plano
+  swarm-start [zona] [coord] [exec]  (compatibilidad) usa: prama-agent swarm <zona> --workers agy:3
 EOF
 }
 
@@ -469,162 +468,8 @@ _bus_clear() {
 }
 
 # Validates/launches a coordinator + executor pair. Prints the two session names.
+# v5 compatibility: `bus swarm-start [zone] [coord] [exec]` → `swarm <zone> --coord C --workers E:1`.
 _bus_swarm_start() {
   local zone=${1:-${ZONES[0]:-}} coord=${2:-claude} exec_a=${3:-agy}
-  zone_dir "$zone" >/dev/null || die "Zona desconocida: '$zone'"
-  is_in "$coord" "${AGENTS[@]}" || die "Agente coordinador desconocido: '$coord' (${AGENTS[*]})"
-  is_in "$exec_a" "${AGENTS[@]}" || die "Agente ejecutor desconocido: '$exec_a' (${AGENTS[*]})"
-  command -v "$coord" >/dev/null 2>&1 || die "El agente coordinador '$coord' no está instalado."
-  if ! command -v "$exec_a" >/dev/null 2>&1; then
-    warn "El agente '$exec_a' no está instalado; el ejecutor usará 'claude'."
-    exec_a=claude
-    command -v claude >/dev/null 2>&1 || die "Tampoco está instalado 'claude'."
-  fi
-  local cs es
-  cs=$(session_name_for "$coord" "$zone" coordinator)
-  es=$(session_name_for "$exec_a" "$zone" executor)
-  "$SELF_PATH" "$coord" "$zone" --role coordinator --bg || die "No se pudo lanzar el coordinador."
-  "$SELF_PATH" "$exec_a" "$zone" --role executor --bg || die "No se pudo lanzar el ejecutor."
-  refresh_dimensions
-  box_top "✦ DUPLA INICIADA" "$zone" "$C_LIVE"
-  box_row "$C_LIVE" "$(_bus_cell "$(role_badge coordinator)" 16) ${C_BOLD}$cs${C_OFF} ${C_MUTED}($coord)${C_OFF}"
-  box_row "$C_LIVE" "$(_bus_cell "$(role_badge executor)" 16) ${C_BOLD}$es${C_OFF} ${C_MUTED}($exec_a)${C_OFF}"
-  box_bottom "prama-agent bus assign coordinator \"<objetivo>\"" "$C_LIVE"
-  _bus_notify "🤝 Enjambre iniciado en '$zone': $cs + $es"
-}
-
-# ── Guided swarm wizard (TUI) ───────────────────────────────────────────────
-swarm_wizard_menu() {
-  while true; do
-    local def_z="${ZONE:-${ZONES[0]:-}}"
-    local SW_LABELS=(
-      "◄ VOLVER AL MENÚ"
-      "✦ LANZAR DUPLA"
-      "❖ ABRIR COCKPIT"
-      "☍ ENVIAR TAREA"
-      "♺ LANZAR DAEMON"
-      "◉ VER ACTIVIDAD"
-    )
-    local SW_METAS=(
-      "Regresar al menú principal"
-      "Coordinador (claude) + Ejecutor (agy) en segundo plano en '$def_z'"
-      "Pantalla dividida: Coordinador + Ejecutor + monitor del bus"
-      "Enviar una instrucción a una sesión exacta o a un rol"
-      "Agente daemon que procesa la cola del bus en '$def_z'"
-      "Agentes vivos, colas y últimos eventos del bus"
-    )
-    local SW_AVAIL=(1 1 1 1 1 1)
-    local SW_TARGETS=("" "" "" "" "" "")
-    local rc=0
-    CHOICE=0
-    tui_select_box "swarm" "☍ COORDINAR ENJAMBRE" SW_LABELS SW_METAS SW_AVAIL SW_TARGETS || rc=$?
-    (( rc == 3 )) && continue
-    if (( rc == 2 )) || [ "${CHOICE:-0}" = 0 ]; then
-      return 0
-    fi
-    case "$CHOICE" in
-      1)
-        printf '\e[2J\e[H\e[?25h'
-        ( _bus_swarm_start "$def_z" claude agy )
-        _bus_pause
-        ;;
-      2)
-        printf '\e[?25h'
-        ( subcmd_cockpit "$def_z" )
-        ;;
-      3)
-        printf '\e[2J\e[H\e[?25h\n'
-        refresh_dimensions
-        box_top "☍ ENVIAR TAREA" "BUS" "$C_LIVE"
-        box_row "$C_LIVE" "${C_MUTED}Destino: nombre de sesión exacto o rol (coordinator, executor, reader, daemon)${C_OFF}"
-        box_bottom "" "$C_LIVE"
-        local dest='' msg=''
-        _bus_prompt "Destino [coordinator]:" dest
-        [ -n "$dest" ] || dest=coordinator
-        _bus_prompt "Instrucción:" msg
-        if [ -n "$msg" ]; then
-          ( _bus_assign "$dest" "$msg" )
-          _bus_pause
-        fi
-        ;;
-      4)
-        printf '\e[2J\e[H\e[?25h'
-        "$SELF_PATH" claude "$def_z" --role daemon --loop 60 --bg
-        _bus_pause
-        ;;
-      5)
-        printf '\e[2J\e[H\e[?25h'
-        ( _bus_status 12 )
-        _bus_pause
-        ;;
-    esac
-    printf '\e[?25l'
-  done
-}
-
-# ── Cockpit: coordinator + executor + bus monitor in one tmux window ────────
-# Pane command that shows a live agent session inside the cockpit (nested client on the same server).
-# Re-attaches while the session exists; exits when it is stopped.
-cockpit_view_cmd() {
-  local target=$1 q_sock q_conf q_t
-  printf -v q_sock '%q' "$PRAMA_TMUX_SOCKET"
-  printf -v q_conf '%q' "$PRAMA_TMUX_CONF"
-  printf -v q_t '%q' "=$target"
-  printf 'while tmux -L %s has-session -t %s 2>/dev/null; do env -u TMUX tmux -L %s -f %s attach-session -t %s || sleep 1; done' \
-    "$q_sock" "$q_t" "$q_sock" "$q_conf" "$q_t"
-}
-
-subcmd_cockpit() {
-  local zone=${1:-${ZONES[0]:-}} coord_agent=${2:-claude} exec_agent=${3:-agy}
-  local dir
-  dir=$(zone_dir "$zone") || die "Zona desconocida: '$zone'"
-  [ -d "$dir" ] || die "El directorio de la zona '$zone' no existe: $dir"
-  is_in "$coord_agent" "${AGENTS[@]}" || die "Agente desconocido: '$coord_agent'"
-  is_in "$exec_agent" "${AGENTS[@]}" || die "Agente desconocido: '$exec_agent'"
-  if ! command -v "$exec_agent" >/dev/null 2>&1; then
-    warn "El agente '$exec_agent' no está instalado; el ejecutor usará 'claude'."
-    exec_agent=claude
-  fi
-  ensure_tmux_conf
-
-  local cs
-  cs=$(slugify "${PRAMA_SESSION_PREFIX}-cockpit-${zone}")
-  valid_session_name "$cs" || die "No se pudo derivar un nombre de sesión válido para la zona '$zone'."
-
-  if ! tmx_has "$cs"; then
-    # The agents run as real, bus-visible background sessions; the cockpit panes are just
-    # nested viewers attached to them (so assign/report reach them and they outlive the cockpit).
-    local coord_s exec_s
-    coord_s=$("$SELF_PATH" "$coord_agent" "$zone" --role coordinator --porcelain) || die "No se pudo lanzar el coordinador."
-    exec_s=$("$SELF_PATH" "$exec_agent" "$zone" --role executor --porcelain) || die "No se pudo lanzar el ejecutor."
-    local view_coord view_exec watch_cmd p0 p1 p2
-    view_coord=$(cockpit_view_cmd "$coord_s")
-    view_exec=$(cockpit_view_cmd "$exec_s")
-    printf -v watch_cmd '%q ' "$SELF_PATH" bus watch
-    local env_args=(-e "PATH=$PATH" -e "PRAMA_STATE_HOME=$PRAMA_STATE_HOME" -e "PRAMA_BUS_DIR=$PRAMA_BUS_DIR"
-                    -e "PRAMA_TMUX_SOCKET=$PRAMA_TMUX_SOCKET" -e "PRAMA_TMUX_CONF=$PRAMA_TMUX_CONF")
-    refresh_dimensions
-    p0=$(tmx new-session -d -P -F '#{pane_id}' -s "$cs" -x "${COLS:-120}" -y "${ROWS:-40}" -c "$dir" \
-           "${env_args[@]}" "$view_coord") || die "tmux no pudo crear el cockpit '$cs'."
-    tmx select-pane -t "$p0" -T "❖ COORDINATOR · $coord_s" 2>/dev/null || true
-    p1=$(tmx split-window -h -l 50% -P -F '#{pane_id}' -t "$p0" -c "$dir" "${env_args[@]}" "$view_exec") \
-      || { tmx_kill "$cs"; die "No se pudo crear el panel del ejecutor."; }
-    tmx select-pane -t "$p1" -T "✦ EXECUTOR · $exec_s" 2>/dev/null || true
-    p2=$(tmx split-window -v -l 30% -P -F '#{pane_id}' -t "$p1" -c "$dir" "${env_args[@]}" "${watch_cmd% }") \
-      || { tmx_kill "$cs"; die "No se pudo crear el panel del bus."; }
-    tmx select-pane -t "$p2" -T "☍ BUS" 2>/dev/null || true
-    tmx select-pane -t "$p0" 2>/dev/null || true
-    ok "Cockpit '$cs' creado (coordinador: $coord_s · ejecutor: $exec_s)."
-  fi
-
-  if [ ! -t 0 ] || [ ! -t 1 ]; then
-    info_msg "Cockpit activo: prama-agent attach $cs"
-    return 0
-  fi
-  info_msg "Entrando al cockpit '$cs' ($PRAMA_MENU_KEY o el botón ◂ MENU para volver)."
-  type restore_locale >/dev/null 2>&1 && restore_locale
-  (( ${IN_TUI:-0} )) && declare -F tui_leave_screen >/dev/null && tui_leave_screen
-  tmx_attach "$cs"
-  (( ${IN_TUI:-0} )) && declare -F tui_enter_screen >/dev/null && tui_enter_screen
-  return 0
+  _swarm_start "$zone" --coord "$coord" --workers "$exec_a:1" --no-open
 }

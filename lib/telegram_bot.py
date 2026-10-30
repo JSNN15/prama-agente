@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # lib/telegram_bot.py — prama-agent Telegram bridge (long polling, stdlib only, Python >= 3.8)
+# Copyright 2026 Julian Neira Nova
 # Licensed under the Apache License, Version 2.0
 #
 # Started by `prama-agent telegram daemon` (never directly by users). Security model:

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # lib/health.sh — Agent health: CLI hooks → health file, and the fleet watchdog
+# Copyright 2026 Julian Neira Nova
 # Licensed under the Apache License, Version 2.0
 #
 # Public API (see docs/ARCHITECTURE.md):

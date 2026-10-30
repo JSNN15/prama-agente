@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # prama-agent — Multi-agent terminal control plane for CLI coding agents
-# Copyright 2026 Contributors
+# Copyright 2026 Julian Neira Nova
 # Licensed under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 
 set -u
 
-VERSION="6.0.0"
+VERSION="6.1.0"
 
 # Status line fast path: agy redraws it several times per second, so the last line is reused
 # for PRAMA_SL_MIN seconds with bash builtins only (no forks, before anything else runs).
@@ -66,7 +66,7 @@ if [ "${1:-}" = "--internal-statusline" ]; then
   exit 0
 fi
 
-for _m in core ui agents roles bus health fleet telegram tui; do
+for _m in core ui agents roles bus swarm health fleet telegram tui; do
   # shellcheck source=/dev/null
   source "$LIB_DIR/$_m.sh"
 done
@@ -135,16 +135,35 @@ ${C_BOLD}FLOTA${C_OFF}  (lo que usa el coordinador para administrar agentes)
   fleet model <sesión> <modelo>   fleet edit <sesión> …   fleet restart|kill <sesión>
   fleet presets | models [agente] | watchdog [status|start|stop|logs] | hooks [status|install|uninstall]
 
-${C_BOLD}ENJAMBRE${C_OFF}
-  bus status|assign|report|inbox|broadcast|watch|swarm-start|clear|help
-  cockpit [zona] [coord] [exec]   Pantalla dividida coordinador + ejecutor + bus
-  fzf                    Inspector con vista previa
+${C_BOLD}EQUIPOS${C_OFF}
+  swarm <zona> [--workers agy:3] [--coord claude] [--task "objetivo"]   Coordinador + N agentes
+  swarm stop <zona>      Cerrar el equipo          cockpit [zona|sesión]  Ver el equipo en vivo
+  bus status|assign|report|inbox|broadcast|watch|clear|help            Mensajes entre agentes
+  Dentro de tmux: $PRAMA_MENU_KEY menú · $PRAMA_NAV_KEY lista de agentes · $PRAMA_COCKPIT_KEY cockpit ⇄ agente · Ctrl+b n/p siguiente
 
 ${C_BOLD}SISTEMA${C_OFF}
   worktree list|create|remove|prune   profiles   mcp   zones|agents [--json]
   telegram setup|start|stop|restart|status|logs|test|notify   doctor [--restore-tmux-conf]
-  completion bash        Autocompletado           info  Guía rápida
+  completion bash        Autocompletado           info  Guía rápida           update [versión]  Actualizar
 EOF
+}
+
+# Updates an installation that is a git clone (the installer's and the developer's case).
+subcmd_update() {
+  local ref=${1:-} before after
+  git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1 \
+    || die "Esta instalación no es un clon de git ($REPO_ROOT): reinstala con el instalador de una línea."
+  [ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ] \
+    || die "Hay cambios locales en $REPO_ROOT; guárdalos (git stash) antes de actualizar."
+  before=$(git -C "$REPO_ROOT" rev-parse --short HEAD)
+  git -C "$REPO_ROOT" fetch -q --tags origin || die "No se pudo contactar el repositorio remoto."
+  if [ -n "$ref" ]; then git -C "$REPO_ROOT" checkout -q "$ref" || die "No existe la versión '$ref'."
+  else git -C "$REPO_ROOT" pull -q --ff-only || die "No se pudo avanzar la rama actual (¿divergió?)."; fi
+  after=$(git -C "$REPO_ROOT" rev-parse --short HEAD)
+  if [ "$before" = "$after" ]; then ok "Ya tienes la última versión (v$VERSION, $after)."
+  else ok "Actualizado: $before → $after ($("$SELF_PATH" --version))."; fi
+  "$SELF_PATH" doctor >/dev/null 2>&1 || true   # regenerates tmux.conf, hooks, migrations
+  info_msg "Los agentes en curso usan la versión anterior hasta que los reinicies (prama-agent fleet restart <sesión>)."
 }
 
 subcmd_info() {
@@ -154,6 +173,8 @@ subcmd_info() {
   box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}Volver al menú desde un agente${C_OFF}"
   box_row "$C_BORDER_HI" "  Toca ${C_NEON}◂ MENU${C_OFF} en la barra inferior, o pulsa ${KEY_BADGE} $PRAMA_MENU_KEY ${C_OFF} / ${KEY_BADGE} Ctrl+b d ${C_OFF}."
   box_row "$C_BORDER_HI" "  El agente sigue vivo en segundo plano."
+  box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}Moverte entre agentes${C_OFF}"
+  box_row "$C_BORDER_HI" "  ${KEY_BADGE} $PRAMA_NAV_KEY ${C_OFF} lista de agentes · ${KEY_BADGE} $PRAMA_COCKPIT_KEY ${C_OFF} cockpit del equipo ⇄ agente · ${KEY_BADGE} Ctrl+b n ${C_OFF} siguiente"
   box_sep "$C_BORDER_HI"
   box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}Agentes que colaboran${C_OFF}"
   box_row "$C_BORDER_HI" "  Coordinar enjambre → Lanzar dupla: un coordinador y un ejecutor"
@@ -564,7 +585,7 @@ subcmd_completion() {
 # prama-agent bash completion — add to ~/.bashrc:  eval "$(prama-agent completion bash)"
 _prama_agent() {
   local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]} first=${COMP_WORDS[1]:-}
-  local subs="status ls sessions attach logs capture send restart stop fleet bus cockpit fzf worktree profiles mcp zones agents telegram doctor completion info help"
+  local subs="status ls sessions attach logs capture send restart stop fleet swarm bus cockpit fzf worktree profiles mcp zones agents telegram doctor update completion info help"
   case "$prev" in
     --role|-O) COMPREPLY=($(compgen -W "executor coordinator reader daemon" -- "$cur")); return ;;
     --profile|-P) COMPREPLY=($(compgen -W "default openrouter deepseek glm local" -- "$cur")); return ;;
@@ -574,7 +595,7 @@ _prama_agent() {
   case "$first" in
     attach|a|logs|capture|send|restart|stop)
       [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "$(prama-agent sessions 2>/dev/null)" -- "$cur")); return ;;
-    bus) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "status assign report inbox broadcast watch swarm-start clear help" -- "$cur")); return ;;
+    bus) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "status assign report inbox broadcast watch clear help" -- "$cur")); return ;;
     fleet)
       if [ "$COMP_CWORD" -eq 2 ]; then COMPREPLY=($(compgen -W "status spawn model edit restart kill presets models watchdog hooks help" -- "$cur"))
       elif [ "$COMP_CWORD" -eq 3 ]; then
@@ -583,6 +604,8 @@ _prama_agent() {
           spawn) COMPREPLY=($(compgen -W "${AGENTS[*]}" -- "$cur")) ;;
         esac
       fi; return ;;
+    swarm) COMPREPLY=($(compgen -W "stop help --workers --coord --task --model --worker-model --no-open $(prama-agent zones 2>/dev/null | awk '{print $1}')" -- "$cur")); return ;;
+    cockpit) COMPREPLY=($(compgen -W "$(prama-agent zones 2>/dev/null | awk '{print $1}') $(prama-agent sessions 2>/dev/null)" -- "$cur")); return ;;
     telegram) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "setup start stop restart status logs test notify" -- "$cur")); return ;;
     worktree) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "list create remove prune" -- "$cur")); return ;;
   esac
@@ -603,6 +626,11 @@ if [ "${1:-}" = "--internal-watchdog" ]; then
   watchdog_loop
   exit 0
 fi
+if [ "${1:-}" = "--internal-nav" ]; then
+  shift
+  nav_main "$@"
+  exit 0
+fi
 if [ "${1:-}" = "--internal-runner" ]; then
   shift
   internal_runner "$@"
@@ -616,9 +644,10 @@ if [ $# -gt 0 ]; then
     sessions)              shift; subcmd_sessions "$@"; exit 0 ;;
     zones)                 shift; subcmd_zones "$@"; exit 0 ;;
     agents)                shift; subcmd_agents "$@"; exit 0 ;;
-    cockpit|ui)            shift; subcmd_cockpit "$@"; exit $? ;;
+    cockpit|ui|team)       shift; subcmd_cockpit "$@"; exit $? ;;
+    swarm|equipo)          shift; subcmd_swarm "$@"; exit $? ;;
     fzf|find)              launch_fzf_cockpit; exit $? ;;
-    bus|swarm)             shift; subcmd_bus "$@"; exit $? ;;
+    bus)                   shift; subcmd_bus "$@"; exit $? ;;
     fleet)                 shift; subcmd_fleet "$@"; exit $? ;;
     telegram|tg|bot)       shift; subcmd_telegram "$@"; exit $? ;;
     attach|a)              shift; subcmd_attach "${1:-}"; exit $? ;;
@@ -631,6 +660,7 @@ if [ $# -gt 0 ]; then
     profiles|providers)    subcmd_profiles; exit 0 ;;
     mcp)                   subcmd_mcp; exit 0 ;;
     doctor|fix)            shift; subcmd_doctor "$@"; exit 0 ;;
+    update|upgrade)        shift; subcmd_update "$@"; exit $? ;;
     completion)            shift; subcmd_completion "$@"; exit 0 ;;
     info|--info)           subcmd_info; exit 0 ;;
     -h|--help|help)        usage; exit 0 ;;
