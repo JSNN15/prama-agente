@@ -239,8 +239,9 @@ tmx_capture() {
   tmx capture-pane "${flags[@]}" -t "=$s:" -S "-$lines" 2>/dev/null
 }
 
-# Lists sessions on the prama server. Internal sessions (telegram bot, cockpits) are
-# skipped unless include_internal=1.
+# Lists sessions on the prama server. Internal sessions (telegram bot, watchdog, cockpits) are
+# skipped unless include_internal=1 (public API for scripts; no internal caller needs it).
+# shellcheck disable=SC2120
 prama_sessions() {
   local include_internal=${1:-0} s
   while IFS= read -r s; do
