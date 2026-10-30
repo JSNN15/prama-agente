@@ -988,7 +988,7 @@ _tui_srow() {
 
 _tui_action_meta() {
   case $1 in
-    new)      A_ICON='✚' A_LABEL='Nuevo agente'       A_DESC='claude, agy u opencode en una zona' ;;
+    new)      A_ICON='✚' A_LABEL='Nuevo agente'       A_DESC="${AGENTS[*]} en una zona" ;;
     swarm)    A_ICON='❖' A_LABEL='Coordinar enjambre' A_DESC='coordinador + ejecutores que se hablan' ;;
     telegram) A_ICON='➤' A_LABEL='Telegram'           A_DESC='bot 24/7: controla todo desde el móvil'
               (( TUI_TG_RUNNING )) && A_DESC='bot activo · control desde el móvil' ;;

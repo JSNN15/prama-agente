@@ -399,7 +399,7 @@ _watch_quota_alerts() {
         label=${key%%:*}; label=${label%/default}
         _watch_log "◔ cuota $label ${key##*:} al $pct%"
         bus_event quota watchdog "$s" "$label ${key##*:} $pct%"
-        _watch_alert "$s" "[ALERTA PRAMA] Cuota de $label al $pct% (ventana ${key##*:}, se renueva $(_fmt_reset "$reset")). Afecta a todos los agentes $label de esta cuenta: reparte las tareas pesadas a otros agentes/modelos (p. ej. 'prama-agent fleet spawn opencode <zona> --preset cheap') antes de que se bloqueen."
+        _watch_alert "$s" "[ALERTA PRAMA] Cuota de $label al $pct% (ventana ${key##*:}, se renueva $(_fmt_reset "$reset")). Afecta a todos los agentes $label de esta cuenta: reparte las tareas pesadas a otros agentes/modelos (p. ej. 'prama-agent fleet spawn agy <zona>' o 'prama-agent fleet model <sesión> <modelo>') antes de que se bloqueen."
       fi
     else
       unset 'W_QALERTED[$key]'

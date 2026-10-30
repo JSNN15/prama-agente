@@ -1,11 +1,20 @@
 # prama-agent
 
-**Control plane para agentes de código en la terminal.** Lanza, supervisa y coordina Claude Code,
-Agy (Antigravity) y OpenCode (modelos abiertos vía OpenRouter, incluidos los gratuitos) en varios repositorios, en un servidor remoto o
-en tu máquina. Las sesiones sobreviven a cortes de SSH, los agentes se pasan tareas entre sí y todo se
-controla desde una interfaz de terminal pensada tanto para escritorio como para el celular (Termius).
+**English** · [Español](README.es.md)
 
-*Apache-2.0 · bash ≥ 4.4 + tmux ≥ 3.2 + git · opcionales: `fzf`, `jq`, `less`, `python3` + `curl` (solo Telegram)*
+[![CI](https://github.com/JSNN15/prama-agente/actions/workflows/ci.yml/badge.svg)](https://github.com/JSNN15/prama-agente/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+![bash ≥ 4.4](https://img.shields.io/badge/bash-%E2%89%A5%204.4-4EAA25)
+![tmux ≥ 3.2](https://img.shields.io/badge/tmux-%E2%89%A5%203.2-1BB91F)
+
+**A terminal control plane for CLI coding agents.** prama-agent launches, supervises and coordinates
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) and Google Antigravity (`agy`) across
+several repositories, on a remote server or on your laptop. Sessions survive SSH drops, agents hand
+work to each other through a message bus, and a coordinator agent can manage its own fleet: spawn
+helpers, switch their models, restart them and react when one is blocked by a login, a quota or a
+billing problem.
+
+It is plain bash on top of a dedicated tmux server: no daemon to install, no database, no Node.js.
 
 ```
  ◆ PRAMA AGENT v6.0.0  server-01                   ● 3 activos · 1 trabajando   LOAD 1.63 · RAM 21%
@@ -15,206 +24,216 @@ controla desde una interfaz de terminal pensada tanto para escritorio como para 
 │ ▸ ● claude-backend   ✦ exec  listo   ▰▰▱▱  54% │├─ en vivo ─────────────────────────────────────┤
 │   ● claude-backend   ❖ coord listo   ▱▱▱▱   0% ││ > agrega endpoint /health                     │
 ├─ Acciones ─────────────────────────────────────┤│ Thinking… editando src/routes/health.ts       │
-│   ✚ Nuevo agente         claude, agy u openc… ││                                               │
+│   ✚ Nuevo agente         claude o agy en zona ││                                               │
 │   ❖ Coordinar enjambre   coordinador + ejecut… ││                                               │
 ╰────────────────────────────────────────────────╯╰───────────────────── ↵ entrar · t tarea · l logs ─╯
   ↵  entrar  t  tarea  n  nuevo  l  logs  x  cerrar  r  reiniciar  /  filtrar  c  cockpit  ?  ayuda
 ```
 
-## Instalación
+> The interactive UI and the agents' role prompts are in Spanish; the CLI flags, JSON output and
+> documentation are bilingual. UI translation is on the [roadmap](docs/ROADMAP.md).
+
+## Why
+
+Running coding agents for real work quickly turns into a dozen terminals: one per repository, a few
+of them waiting for a login, one silently stuck on a usage limit, another lost because the SSH
+connection dropped. prama-agent turns that into a supervised fleet:
+
+- **Persistent sessions.** Every agent runs under a supervisor inside its own tmux session on a
+  dedicated server (`tmux -L prama`). Close the laptop, lose the connection, reattach from a phone.
+- **Health you can trust.** Agents report their state through CLI hooks, not screen scraping alone:
+  `READY`, `WORKING`, `BLOCKED` (with a reason: `login`, `auth`, `credit`, `limit`, `trust`, `model`),
+  `STANDBY`. Nothing is ever typed into a blocked agent; its work is queued.
+- **Quota before the wall.** Usage of the 5-hour and weekly windows, reset times and context usage
+  are collected from each agent's status line. The coordinator is warned at 90 %.
+- **Agents managing agents.** A coordinator can spawn, edit, restart and stop helpers through a
+  JSON API with guard rails (scope, limits, never itself, never another coordinator).
+- **In-place restarts.** Changing a model or preset relaunches the agent in the same pane and
+  resumes the same conversation; the scrollback is kept.
+
+## Install
 
 ```bash
 git clone https://github.com/JSNN15/prama-agente.git && cd prama-agente
-sudo make install          # o, solo para tu usuario:  make install PREFIX=~/.local CONF_DIR=~/.config/prama-agent
-prama-agent doctor         # verifica dependencias, agentes y migra desde v5
-eval "$(prama-agent completion bash)"   # autocompletado (el instalador lo deja en /etc/bash_completion.d)
+sudo make install            # or per user: make install PREFIX=~/.local CONF_DIR=~/.config/prama-agent
+prama-agent doctor           # checks dependencies, agents, hooks and config
 ```
 
-## Uso rápido
+Requirements: bash ≥ 4.4, tmux ≥ 3.2, git. Recommended: `jq` (hooks and quota telemetry), `fzf`,
+`less`. The optional Telegram bridge needs `python3` and `curl`. At least one agent CLI:
+`claude` (Claude Code) or `agy` (Antigravity CLI).
+
+## Quick start
 
 ```bash
-prama-agent                                  # interfaz interactiva
-prama-agent claude backend                   # lanzar y entrar (modo ASK por defecto)
-prama-agent agy web --bg -w feat/login       # en segundo plano, aislado en un git worktree
-prama-agent claude backend --role reader     # auditor de solo lectura (fuerza plan mode)
-prama-agent status                           # panel de la flota
-prama-agent attach prama-claude-backend      # volver a entrar (Alt+m o Ctrl+b d para salir)
+prama-agent                                   # interactive UI
+prama-agent claude backend                    # launch Claude Code in the "backend" zone and attach
+prama-agent agy web --bg -w feat/login        # background, isolated in a git worktree
+prama-agent claude backend --role reader      # read-only auditor (plan mode)
+prama-agent status                            # fleet overview
+prama-agent attach prama-claude-backend       # reattach (Alt+m returns to the menu)
 ```
 
-### Interfaz interactiva
+In the interactive UI: `n` new agent, `↵` attach, `t` send a task, `l` history, `r`/`x` restart/stop,
+`/` filter, `c` cockpit, `?` help. It adapts to the terminal width (side-by-side from 100 columns,
+stacked on a phone), refreshes every 2 s and supports touch and mouse wheel.
 
-| Tecla | Acción | Tecla | Acción |
-| --- | --- | --- | --- |
-| `↑↓` `jk` `1-9` | moverse | `↵` | entrar a la sesión / elegir |
-| `n` | nuevo agente (asistente) | `t` | enviar tarea a la sesión |
-| `l` | ver historial (`less`) | `r` / `x` | reiniciar / cerrar (con confirmación) |
-| `/` | filtrar sesiones | `f` | inspector `fzf` con vista previa |
-| `c` | cockpit (coordinador + ejecutor + bus) | `?` | ayuda |
-| `o` `y` `e` `p` `w` `g` | rol · permisos · remote · perfil LLM · worktree · segundo plano | `q` | salir |
+A **zone** is a named working directory, usually a repository. Zones come from `config.env`, or are
+discovered from git repositories under `PRAMA_DISCOVER_ROOTS`.
 
-- **Responsive:** lista + vista previa lado a lado desde 100 columnas, apilado en pantallas de celular.
-- **En vivo:** estado, CPU y vista previa se refrescan solos cada 2 s; soporta toques y rueda del ratón
-  (`PRAMA_TUI_MOUSE=0` para desactivarlo).
-- **Volver al menú desde un agente:** toca `◂ MENU` en la barra inferior o pulsa `Alt+m`
-  (configurable con `PRAMA_MENU_KEY`). El agente sigue vivo.
+## Fleet management
 
-## Permisos y seguridad
+Everything below is available to you and to a coordinator agent; add `--json` for machine output.
 
-| Modo | Flag | Qué hace |
+```bash
+prama-agent fleet status --json              # state, block reason, model, preset, queue, quota
+prama-agent fleet spawn agy backend --preset cheap --task "Add tests for utils/date.ts"
+prama-agent fleet model prama-claude-backend-2 sonnet      # same pane, same conversation
+prama-agent fleet edit  prama-claude-backend-2 --effort high --preset reviewer
+prama-agent fleet restart <session> · fleet kill <session> · fleet presets · fleet models agy
+prama-agent fleet hooks status               # health hooks per agent CLI
+```
+
+- **Watchdog.** An internal session starts with the first agent. It alerts the zone's coordinator
+  (and Telegram, if configured) when an agent becomes blocked, stops, recovers or crosses the quota
+  threshold, and delivers queued tasks once the agent is ready again.
+- **Guard rails for agents.** An agent cannot act on itself or on a coordinator, only within its
+  scope (`PRAMA_FLEET_SCOPE=zone|children|all`), and `spawn` honours `PRAMA_FLEET_MAX`. Every action
+  is logged on the bus.
+- **Model changes never touch your defaults.** prama restarts the agent with `--model` instead of
+  typing `/model`, which in Claude Code also rewrites your global default. agy model ids are
+  validated against `agy models`, since agy silently falls back to its default on unknown ids.
+
+### How health and quota are collected
+
+| | Claude Code | Antigravity (`agy`) |
 | --- | --- | --- |
-| **ASK** (por defecto) | `--ask` | el agente pide confirmación antes de cada acción |
-| **PLAN** | `--plan` / `--role reader` | solo lectura nativa del CLI |
-| **YOLO** | `--yolo` / `PRAMA_SKIP_PERMISSIONS=1` | sin confirmaciones; solo en servidores aislados |
+| Hooks | `SessionStart`, `UserPromptSubmit`, `Stop`, `StopFailure`, `Notification`, … injected per session with `--settings` | `SessionStart`, `PreInvocation`, `Stop` (error text classified) |
+| Where | session only; `~/.claude` is not modified | one named entry, `prama-agent`, in `~/.gemini/config/hooks.json` (agy has no per-session hooks); a no-op outside prama panes; `fleet hooks uninstall` removes it |
+| Quota | status line `rate_limits` (5 h / 7 d) | status line `quota` buckets of the active model family |
+| Resume | `--session-id` / `--resume <id>` | `--conversation <id>` (id reported by the hooks) |
 
-| Agente | YOLO | PLAN | Remote (`--remote`) | Prompt de rol |
-| --- | --- | --- | --- | --- |
-| `claude` | `--dangerously-skip-permissions` | `--permission-mode plan` | `--remote-control <sesión>` | `--append-system-prompt` |
-| `agy` | `--dangerously-skip-permissions` | `--mode plan` | `--remote-control` | — |
-| `opencode` | `--auto` + `permission: allow` | permisos `edit/bash: deny` | — | `instructions` (en su config) |
+Screen detection remains as a fallback for dialogs shown before hooks run (login, folder trust,
+model picker). If you already use a custom Claude Code status line, prama chains it.
 
-Garantías de diseño (detalle en [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)):
+## Roles and swarms
 
-- prama usa **su propio servidor tmux** (`tmux -L prama`): nunca modifica tu `~/.tmux.conf` ni toca, lista
-  o cierra tus sesiones personales.
-- Todo el estado vive en `~/.local/state/prama-agent` con permisos `0700`; nada en `/tmp`.
-- Los datos (estado de sesiones, colas, eventos) nunca se ejecutan como código.
-- Las claves de API nunca aparecen en la línea de comandos (`ps`); se aplican dentro del panel del agente.
-- Objetivos tmux exactos: `stop prama-claude` nunca cierra `prama-claude-backend`.
-- `IS_SANDBOX=1` solo se exporta en modo YOLO.
-
-## Roles y enjambre multi-agente
-
-| Rol | Uso |
+| Role | Purpose |
 | --- | --- |
-| `✦ executor` | implementa y prueba; reporta con `prama-agent bus report` |
-| `❖ coordinator` | planifica y delega con `prama-agent bus assign` |
-| `◉ reader` | auditor de solo lectura |
-| `♺ daemon` | procesa una cola de tareas en bucle (`--loop 60 --task "..."`) |
+| `✦ executor` | implements and tests; reports with `prama-agent bus report` |
+| `❖ coordinator` | plans, delegates with `bus assign`, manages the fleet |
+| `◉ reader` | read-only reviewer (plan mode) |
+| `♺ daemon` | works through a task queue in a loop (`--loop 60 --task "…"`) |
 
 ```bash
-prama-agent bus swarm-start backend claude agy     # coordinador (claude) + ejecutor (agy)
-prama-agent cockpit backend                        # pantalla dividida con ambos + monitor del bus
-prama-agent bus assign executor "Implementa /health y corre pytest"
-prama-agent bus assign daemon "Corre ruff y pytest"   # encola para el daemon
-prama-agent bus report "Endpoint listo; 18/18 tests ok"
-prama-agent bus watch                              # eventos en vivo
-prama-agent bus inbox prama-claude-backend --pop   # tareas pendientes de una sesión
+prama-agent bus swarm-start backend claude agy   # coordinator (claude) + executor (agy)
+prama-agent cockpit backend                      # split view: both agents + live bus
+prama-agent bus assign executor "Implement /health and run pytest"
+prama-agent bus watch                            # live events
 ```
 
-- `assign` acepta un **nombre exacto** de sesión o un **rol** (si hay varias, la más reciente). Nunca hace
-  coincidencias parciales.
-- El texto solo se escribe en sesiones cuyo agente está listo o trabajando; si la sesión está en un shell,
-  en standby o es un daemon, la tarea queda en su cola.
-- `broadcast` solo llega a sesiones de agentes de prama, nunca a un shell.
-- El daemon respeta el modo de permisos. En ASK, como no puede preguntar, las herramientas que requieren
-  aprobación se deniegan (se avisa al iniciar).
+`assign` takes an exact session name or a role and never matches partially. Text is only typed into
+agents that are ready or working; anything else is queued (Maildir queues, multi-consumer safe).
 
-## Flota: el coordinador administra a sus agentes
+## Presets
 
-El coordinador (o tú) gestiona la flota con `prama-agent fleet`; todo devuelve JSON con `--json`.
-
-```bash
-prama-agent fleet status --json                          # estado, bloqueo + motivo, modelo, preset, cola, cuota
-prama-agent fleet spawn opencode backend --preset cheap --task "Agrega tests a utils/date.ts"
-prama-agent fleet model prama-claude-backend-2 sonnet    # reinicia en el mismo panel, misma conversación
-prama-agent fleet edit prama-claude-backend-2 --effort high --preset reviewer
-prama-agent fleet restart <sesión>  ·  fleet kill <sesión>  ·  fleet presets  ·  fleet models opencode
-```
-
-- **Salud determinista.** Claude Code recibe (vía `--settings`, sin tocar tu `~/.claude`) hooks que
-  reportan `StopFailure` (límite de uso, autenticación, crédito, modelo inexistente), el modelo en uso y
-  el id de conversación. agy recibe hooks `SessionStart`/`PreInvocation`/`Stop` (el error de un `Stop`
-  se clasifica: cuota, créditos, auth…); como agy no admite hooks por sesión, prama mantiene una entrada
-  `prama-agent` en `~/.gemini/config/hooks.json` que no hace nada fuera de sus paneles
-  (`prama-agent fleet hooks status|install|uninstall`). Para lo que ocurre antes de los hooks (login,
-  "¿confías en esta carpeta?", menú de modelo) y para opencode se lee la pantalla. Resultado: estado
-  `BLOCKED` con motivo (`login`, `auth`, `limit`, `credit`, `trust`, `model`).
-- **Cuota antes de chocar.** La statusline de claude y agy (solo para la sesión) reporta el % usado de
-  las ventanas de 5 h y 7 días, su hora de reinicio y el % de contexto: aparece en `fleet status`, en la
-  TUI y en el JSON (`quota`). Cuando una cuenta pasa `PRAMA_QUOTA_WARN` (90 %) el watchdog avisa una vez
-  al coordinador para que reparta trabajo antes del bloqueo. Si ya tienes una statusline en Claude, se
-  sigue mostrando (prama la encadena).
-- **Nunca se escribe sobre un agente bloqueado:** la tarea queda en su cola.
-- **Watchdog** (sesión interna, arranca solo): avisa al coordinador de la zona y a Telegram cuando un
-  agente se bloquea, se detiene o se recupera, y entrega las tareas en cola cuando el agente vuelve a
-  estar listo.
-- **Cambio de modelo/configuración en caliente:** el supervisor relanza el agente en el mismo panel (el
-  scrollback se conserva) con `--model`/`--effort`/preset nuevos y la misma conversación (claude
-  `--resume <id>`, agy `--conversation <id>`). No usa `/model` (Claude lo guardaría como tu modelo por
-  defecto global). Los modelos de agy se validan contra `agy models` (agy ignora en silencio un id
-  desconocido).
-- **Límites para agentes:** un agente no puede actuar sobre sí mismo ni sobre un coordinador, solo
-  dentro de su zona (`PRAMA_FLEET_SCOPE`), y `spawn` respeta `PRAMA_FLEET_MAX`. Todo queda en el bus.
-
-### Presets (perfiles con skills)
-
-`--preset <nombre>` aplica agente, modelo, esfuerzo, rol, prompt y skills. Incluidos: `reviewer`
-(Claude, solo lectura), `cheap` (OpenCode con Qwen3 Coder gratis) y `architect` (Claude, máximo esfuerzo).
-Crea los tuyos en `~/.config/prama-agent/presets/<nombre>.env`; `SKILLS_DIR` apunta a una carpeta de
-skills (`<skill>/SKILL.md`) que se carga como plugin solo en ese agente. Detalle en
+`--preset <name>` applies an agent, model, effort, role, extra prompt and a skills folder in one go.
+Bundled: `reviewer` (Claude, read-only), `architect` (Claude, extra-high effort) and `cheap` (agy Flash
+for mechanical work). Your own go in `~/.config/prama-agent/presets/<name>.env`; a `SKILLS_DIR` with
+`<skill>/SKILL.md` folders is mounted as a plugin for that agent only. See
 [presets/README.md](presets/README.md).
 
-## Telegram (control desde el celular)
+## Permissions and security
 
-```bash
-prama-agent telegram setup     # pega el token de @BotFather y envía el código de 6 caracteres al bot
-prama-agent telegram start     # bot 24/7 en una sesión persistente (status | logs | restart | stop)
-```
-
-- Emparejamiento con **código de un solo uso**: solo tu chat y tu usuario quedan autorizados.
-- Menú con botones que se edita en su lugar: ver pantalla, hablar con un agente, lanzar, reiniciar o
-  cerrar (con confirmación). Comandos: `/status`, `/logs`, `/send`, `/launch`, `/help`.
-- Argumentos validados contra una lista blanca (agentes instalados, zonas registradas, sesiones vivas).
-- El token se guarda en `~/.config/prama-agent/telegram.env` (`0600`) y nunca va en la línea de comandos.
-- ⚠️ El bot equivale a una terminal remota: protege tu cuenta de Telegram con verificación en dos pasos.
-
-## Perfiles LLM
-
-```bash
-prama-agent profiles                           # estado de cada perfil
-prama-agent claude backend --profile deepseek  # Claude Code contra otro endpoint (openrouter/deepseek/glm/local)
-prama-agent opencode backend --model openrouter/moonshotai/kimi-k2   # OpenCode con cualquier modelo de OpenRouter
-```
-
-Claves en `~/.config/prama-agent/providers.env` o `/etc/prama-agent/providers.env` (`chmod 600`).
-
-## Configuración
-
-`/etc/prama-agent/config.env` y `~/.config/prama-agent/config.env` (sintaxis bash; ver
-[config/config.env.example](config/config.env.example)). Sin `ZONES`, cada repo git bajo
-`PRAMA_DISCOVER_ROOTS` se registra como zona.
-
-| Variable | Por defecto | |
+| Mode | Flag | Behaviour |
 | --- | --- | --- |
-| `PRAMA_SKIP_PERMISSIONS` | `0` | `1` = YOLO por defecto |
-| `PRAMA_DEFAULT_REMOTE` | `0` | Remote Control por defecto |
-| `PRAMA_MENU_KEY` | `M-m` | tecla para volver al menú (evita `C-g`, que usa Claude Code) |
-| `PRAMA_TMUX_SOCKET` | `prama` | servidor tmux dedicado |
-| `PRAMA_WORKTREE_ROOT` | `<padre>/.prama-worktrees` | dónde se crean los worktrees |
-| `PRAMA_COLOR` | auto | `truecolor` / `256` (útil si SSH no reenvía `COLORTERM`) |
+| **ASK** (default) | `--ask` | the agent asks before each action |
+| **PLAN** | `--plan`, `--role reader` | the CLI's native read-only mode |
+| **YOLO** | `--yolo`, `PRAMA_SKIP_PERMISSIONS=1` | no confirmations; for isolated servers you control |
 
-**Worktrees:** se crean fuera del repo (`<padre>/.prama-worktrees/<repo>/<rama>`), reutilizan la rama
-si existe (nunca la reinician) y copian `.env`, `.env.local` y `.mcp.json`.
+Design guarantees (details in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)):
 
-## Migrar desde v5
+- A **dedicated tmux server**; your own tmux sessions and `~/.tmux.conf` are never touched.
+- All state lives in `~/.local/state/prama-agent` (mode `0700`); nothing in `/tmp`.
+- State, queues and events are data: never `source`d or `eval`ed.
+- API keys never appear on a command line (`ps`); they are applied inside the agent's pane.
+- Exact tmux targets: stopping `prama-claude` never closes `prama-claude-backend`.
+- Stopping a session terminates its whole process group, so no agent is left running orphaned.
 
-`prama-agent doctor` detecta y limpia lo que dejó v5:
+Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
-- borra el bus inseguro `/tmp/prama-bus`;
-- `doctor --restore-tmux-conf` restaura tu `~/.tmux.conf` original (v5 lo sobrescribía);
-- avisa si `/etc/prama-agent/config.env` sigue con `PRAMA_SKIP_PERMISSIONS=1`;
-- las sesiones de v5 viven en tu tmux personal; v6 usa su propio servidor (`tmux -L prama`).
-
-## Desarrollo
+## Telegram (control from your phone)
 
 ```bash
-make lint     # bash -n + shellcheck + py_compile
-make test     # suite en un servidor tmux, HOME y estado aislados
+prama-agent telegram setup     # paste the @BotFather token, then send the one-time code to the bot
+prama-agent telegram start     # 24/7 bot in a persistent session (status | logs | restart | stop)
 ```
 
-Arquitectura, invariantes de seguridad y API interna: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-Guía de contribución: [CONTRIBUTING.md](CONTRIBUTING.md).
+One-time pairing code (only your chat and user are authorised), inline menus to view a screen, talk
+to an agent, launch, restart or stop, and argument whitelists. The bot is a remote terminal: protect
+your Telegram account with two-step verification.
 
-## Licencia
+## LLM profiles
+
+`--profile` points Claude Code at another Anthropic-compatible endpoint: `openrouter`, `deepseek`,
+`glm` or `local` (a router such as claude-code-router). Keys live in `providers.env` (`chmod 600`).
+
+```bash
+prama-agent profiles
+prama-agent claude backend --profile deepseek
+```
+
+## Configuration
+
+`/etc/prama-agent/config.env`, then `~/.config/prama-agent/config.env` (bash syntax, see
+[config/config.env.example](config/config.env.example)).
+
+| Variable | Default | |
+| --- | --- | --- |
+| `ZONES` / `ZONE_DIRS` | discovered | named working directories |
+| `PRAMA_SKIP_PERMISSIONS` | `0` | `1` = YOLO by default |
+| `PRAMA_DEFAULT_REMOTE` | `0` | enable the CLIs' remote control by default |
+| `PRAMA_FLEET_MAX` / `PRAMA_FLEET_SCOPE` | `8` / `zone` | fleet limits for agents |
+| `PRAMA_HOOKS` / `PRAMA_STATUSLINE` | `1` / `1` | health hooks / quota telemetry |
+| `PRAMA_QUOTA_WARN` | `90` | quota alert threshold (%) |
+| `PRAMA_WATCHDOG` | `1` | fleet watchdog |
+| `PRAMA_MENU_KEY` | `M-m` | key that returns from an agent to the menu |
+| `PRAMA_EXPERIMENTAL` | `0` | enable experimental agents (OpenCode) |
+
+**Worktrees** (`-w <branch>`) are created outside the repository
+(`<parent>/.prama-worktrees/<repo>/<branch>`), reuse an existing branch without resetting it, and copy
+`.env`, `.env.local` and `.mcp.json`.
+
+## Status and roadmap
+
+| Agent | Status |
+| --- | --- |
+| Claude Code | supported: hooks, quota, resume, presets, remote control |
+| Antigravity (`agy`) | supported: hooks, quota, resume, model validation, remote control |
+| OpenCode | **experimental**, integrated and tested but off by default (`PRAMA_EXPERIMENTAL=1`) |
+| Hermes Agent | **under evaluation**, not integrated |
+
+OpenCode and Hermes are the two serious candidates for running open-weight models (Qwen, Kimi, GLM,
+DeepSeek) through OpenRouter as low-cost workers. The evaluation and the criteria for enabling them
+are in [docs/ROADMAP.md](docs/ROADMAP.md).
+
+## Migrating from v5
+
+`prama-agent doctor` detects and cleans up what v5 left behind: it removes the insecure
+`/tmp/prama-bus`, `doctor --restore-tmux-conf` restores your original `~/.tmux.conf`, and it lists agents
+running outside prama (they do not survive an SSH drop). v5 sessions lived on your personal tmux server;
+v6 uses its own.
+
+## Development
+
+```bash
+make lint     # bash -n, shellcheck, py_compile
+make test     # end-to-end suite on an isolated tmux server, HOME and state
+```
+
+Architecture, security invariants and internal API: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). Changes: [CHANGELOG.md](CHANGELOG.md).
+
+## License
 
 [Apache License 2.0](LICENSE)

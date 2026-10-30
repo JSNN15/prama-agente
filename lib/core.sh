@@ -29,7 +29,9 @@ PRAMA_STATE_HOME="${PRAMA_STATE_HOME:-${XDG_STATE_HOME:-$HOME/.local/state}/pram
 PRAMA_BUS_DIR="${PRAMA_BUS_DIR:-$PRAMA_STATE_HOME/bus}"
 PRAMA_TMUX_CONF="${PRAMA_TMUX_CONF:-$PRAMA_STATE_HOME/tmux.conf}"
 
-SUPPORTED_AGENTS=(claude agy opencode)
+SUPPORTED_AGENTS=(claude agy)
+# Integrated and tested, but not enabled by default (PRAMA_EXPERIMENTAL=1 to opt in). See docs/ROADMAP.md.
+EXPERIMENTAL_AGENTS=(opencode)
 AGENTS=("${SUPPORTED_AGENTS[@]}")
 AGENT_DESCS=(
   "Claude Code (Anthropic / API)"
@@ -123,21 +125,26 @@ prama_init() {
 # A config.env written for v5 may still list agents prama no longer drives (kimi, gemini, qwen):
 # keep only supported ones, in the configured order. Dropped names go to DROPPED_AGENTS (doctor).
 _filter_agents() {
-  local a d keep=() descs=()
+  local a d keep=() descs=() allowed=("${SUPPORTED_AGENTS[@]}")
+  (( ${PRAMA_EXPERIMENTAL:-0} )) && allowed+=("${EXPERIMENTAL_AGENTS[@]}")
   DROPPED_AGENTS=()
   for a in "${AGENTS[@]}"; do
-    if is_in "$a" "${SUPPORTED_AGENTS[@]}"; then keep+=("$a"); else DROPPED_AGENTS+=("$a"); fi
+    if is_in "$a" "${allowed[@]}"; then keep+=("$a"); else DROPPED_AGENTS+=("$a"); fi
   done
-  # A legacy list (it named dropped agents) predates opencode: offer every supported agent.
+  # A legacy list (it named dropped agents): offer every supported agent.
   if (( ${#DROPPED_AGENTS[@]} )); then
     for a in "${SUPPORTED_AGENTS[@]}"; do is_in "$a" ${keep[@]+"${keep[@]}"} || keep+=("$a"); done
+  fi
+  # Opting in to experimental agents adds them even when AGENTS was left at the default.
+  if (( ${PRAMA_EXPERIMENTAL:-0} )); then
+    for a in "${EXPERIMENTAL_AGENTS[@]}"; do is_in "$a" ${keep[@]+"${keep[@]}"} || keep+=("$a"); done
   fi
   (( ${#keep[@]} )) || keep=("${SUPPORTED_AGENTS[@]}")
   for a in "${keep[@]}"; do
     case "$a" in
       claude)   d="Claude Code (Anthropic / API)" ;;
       agy)      d="Agy (Antigravity CLI)" ;;
-      opencode) d="OpenCode (OpenRouter · modelos abiertos)" ;;
+      opencode) d="OpenCode (experimental · OpenRouter)" ;;
     esac
     descs+=("$d")
   done
@@ -191,7 +198,29 @@ tmx_running() { tmx list-sessions >/dev/null 2>&1; }
 
 # Exact-match targets: plain "-t name" in tmux does prefix/pattern matching.
 tmx_has()  { tmx has-session -t "=$1" 2>/dev/null; }
-tmx_kill() { tmx kill-session -t "=$1" 2>/dev/null; }
+# Closes a session and everything running in it. Killing the tmux session alone only sends
+# SIGHUP, which some agent CLIs (agy) ignore once they lose the tty: the agent would survive,
+# orphaned, with the supervisor blocked waiting for it. So each pane's process group gets TERM
+# first (KILL after 5 s), then the session is removed.
+tmx_kill() {
+  local s=$1 pid pgids=() g i alive
+  tmx_has "$s" || return 1
+  while IFS= read -r pid; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    g=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+    [[ "$g" =~ ^[0-9]+$ ]] && (( g > 1 )) && pgids+=("$g")
+  done < <(tmx list-panes -s -t "=$s" -F '#{pane_pid}' 2>/dev/null)
+  for g in ${pgids[@]+"${pgids[@]}"}; do kill -TERM -- "-$g" 2>/dev/null; done
+  for (( i = 0; i < 50 && ${#pgids[@]}; i++ )); do
+    alive=0
+    for g in "${pgids[@]}"; do kill -0 -- "-$g" 2>/dev/null && alive=1; done
+    (( alive )) || break
+    sleep 0.1
+  done
+  for g in ${pgids[@]+"${pgids[@]}"}; do kill -KILL -- "-$g" 2>/dev/null; done
+  tmx kill-session -t "=$s" 2>/dev/null
+  return 0
+}
 
 # Types text literally into a session and presses Enter.
 tmx_send() {

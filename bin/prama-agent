@@ -111,7 +111,7 @@ ${C_BOLD}LANZAR${C_OFF}  agentes: ${AGENTS[*]}  ·  zonas: ${ZONES[*]}
   --role, -O <rol>       executor | coordinator | reader | daemon
   --ask | --plan | --yolo  permisos (por defecto: $( (( PRAMA_SKIP_PERMISSIONS )) && echo yolo || echo ask ))
   --remote | --no-remote   Remote Control nativo (claude/agy)
-  --model, -m <modelo>   claude: opus|sonnet|haiku…  opencode: openrouter/<prov>/<modelo>
+  --model, -m <modelo>   claude: opus|sonnet|haiku…  agy: prama-agent fleet models agy
   --effort <nivel>       low | medium | high | xhigh | max (claude)
   --preset <nombre>      perfil con skills/plugins/prompt (prama-agent fleet presets)
   --profile, -P <perfil> ${AVAILABLE_PROFILES[*]} (endpoints para claude)
@@ -413,7 +413,7 @@ subcmd_profiles() {
   _prof_row openrouter "${OPENROUTER_API_KEY:-}" "${OPENROUTER_ANTHROPIC_URL:-https://openrouter.ai/api}" "${OPENROUTER_MODEL:-(--model)}"
   _prof_row local local "${LOCAL_ROUTER_URL:-http://127.0.0.1:3456}" "${LOCAL_ROUTER_MODEL:-default}"
   box_sep "$C_BORDER_HI"
-  box_row "$C_BORDER_HI" "${C_MUTED}opencode usa OpenRouter directo: OPENROUTER_API_KEY $( [ -n "${OPENROUTER_API_KEY:-}" ] && printf '%s● configurada%s' "$C_LIVE" "$C_MUTED" || printf '%s○ falta%s' "$C_BRASS" "$C_MUTED") · modelo por defecto $PRAMA_OPENCODE_MODEL${C_OFF}"
+  is_in opencode "${AGENTS[@]}" && box_row "$C_BORDER_HI" "${C_MUTED}opencode usa OpenRouter directo: OPENROUTER_API_KEY $( [ -n "${OPENROUTER_API_KEY:-}" ] && printf '%s● configurada%s' "$C_LIVE" "$C_MUTED" || printf '%s○ falta%s' "$C_BRASS" "$C_MUTED") · modelo por defecto $PRAMA_OPENCODE_MODEL${C_OFF}"
   box_bottom "keys en $PRAMA_CONFIG_HOME/providers.env (chmod 600)" "$C_BORDER_HI"
 }
 
@@ -484,7 +484,8 @@ subcmd_doctor() {
     fi
   done
   if (( ${#DROPPED_AGENTS[@]} )); then
-    box_row "$C_BORDER_HI" "$meh AGENTS en config.env incluye agentes sin soporte (${DROPPED_AGENTS[*]}): se ignoran; puedes quitarlos"
+    box_row "$C_BORDER_HI" "$meh AGENTS en config.env incluye agentes no habilitados (${DROPPED_AGENTS[*]}): se ignoran"
+    is_in opencode "${DROPPED_AGENTS[@]}" && box_row "$C_BORDER_HI" "${C_MUTED}  opencode es experimental: PRAMA_EXPERIMENTAL=1 para habilitarlo${C_OFF}"
   fi
   if is_in opencode "${AGENTS[@]}" && [ -z "${OPENROUTER_API_KEY:-}" ]; then
     box_row "$C_BORDER_HI" "$meh opencode sin OPENROUTER_API_KEY en providers.env (o usa 'opencode auth login')"
@@ -579,7 +580,7 @@ _prama_agent() {
       elif [ "$COMP_CWORD" -eq 3 ]; then
         case "${COMP_WORDS[2]}" in
           model|edit|restart|kill) COMPREPLY=($(compgen -W "$(prama-agent sessions 2>/dev/null)" -- "$cur")) ;;
-          spawn) COMPREPLY=($(compgen -W "claude agy opencode" -- "$cur")) ;;
+          spawn) COMPREPLY=($(compgen -W "${AGENTS[*]}" -- "$cur")) ;;
         esac
       fi; return ;;
     telegram) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "setup start stop restart status logs test notify" -- "$cur")); return ;;

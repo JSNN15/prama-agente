@@ -1,27 +1,46 @@
 # Contributing to prama-agent
 
-Thank you for your interest in contributing to **prama-agent**!
+**English** · [Español](#español)
 
-## Design Principles
+Thanks for your interest in prama-agent. Issues and pull requests are welcome in English or Spanish.
 
-1. **Minimal Runtime Dependencies:** the core control plane is bash ≥ 4.4 + tmux ≥ 3.2 + git. `fzf`, `jq` and `less` are optional enhancements and must have fallbacks. Python 3 (stdlib only) is allowed **only** for the optional Telegram bridge (`lib/telegram_bot.py`). Do not add Node.js or compiled dependencies.
-2. **Security invariants first:** read the invariants in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — never `source`/`eval` data, all tmux calls through `tmx` with exact targets, state only in the private state dir, no secrets on argv, safe defaults.
-3. **Determinism First:**
-   - Never flatten command arrays with `"${CMD[*]}"` when invoking child shells or `tmux`; always preserve exact argument boundaries using `printf '%q'`.
-   - Never rely on implicit environment inheritance across existing `tmux` server sockets; pass critical variables explicitly (`-e`) or apply them inside the supervised runner.
-4. **Resilience Over Fragility:**
-   - A crashing or updating CLI agent must never destroy the user's `tmux` window or 50,000-line scrollback buffer.
-   - Reconnecting to a session must always detach stale/zombie SSH clients (`tmux attach-session -d`) so mobile or disconnected clients never constrain terminal dimensions.
+## Design principles
 
-## Development & Verification
+1. **Minimal runtime dependencies.** The control plane is bash ≥ 4.4, tmux ≥ 3.2 and git. `jq`, `fzf`
+   and `less` are optional and must have fallbacks. Python 3 (standard library only) is allowed only
+   for the optional Telegram bridge (`lib/telegram_bot.py`). No Node.js or compiled dependencies.
+2. **Security invariants first.** Read them in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): never
+   `source` or `eval` data, every tmux call goes through `tmx` with exact targets, state only in the
+   private state directory, no secrets on a command line, safe defaults.
+3. **Determinism.** Keep argument boundaries (`"${CMD[@]}"`, `printf '%q'`), never flatten command
+   arrays. Do not rely on environment inheritance across tmux servers: pass variables explicitly
+   (`-e`) or set them inside the supervised runner.
+4. **Resilience.** A crashing or updating agent must never destroy the user's pane or its scrollback.
+   Prefer hooks and exit statuses over reading the screen; screen patterns are a fallback.
+5. **The user's configuration is theirs.** prama does not rewrite user files it does not own. When it
+   must add something (agy hooks), it owns one named key, preserves everything else and refuses to
+   touch a file it cannot parse.
 
-Before opening a Pull Request, run the lint (bash -n + shellcheck + py_compile) and the test suite. Every bug fix should come with a regression test in `tests/test_prama_agent.sh`; tests run on an isolated tmux server (`PRAMA_TMUX_SOCKET`) and never touch your real tmux, HOME or `/etc`.
+## Workflow
 
 ```bash
-make lint
-make test
+make lint     # bash -n, shellcheck, py_compile
+make test     # end-to-end suite on an isolated tmux server, HOME and state
 ```
+
+- Every bug fix comes with a regression test in `tests/test_prama_agent.sh`. Tests never touch your
+  real tmux, `HOME` or `/etc`.
+- Keep comments in English; user-facing messages are Spanish today (see the roadmap for i18n).
+- Document new behaviour in both `README.md` and `README.es.md`, and add an entry to `CHANGELOG.md`.
 
 ## License
 
-By contributing to `prama-agent`, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
+By contributing you agree that your contributions are licensed under the
+[Apache License 2.0](LICENSE).
+
+## Español
+
+Los issues y pull requests son bienvenidos en español o en inglés. Antes de abrir un PR ejecuta
+`make lint` y `make test`; cada corrección de errores debe incluir una prueba de regresión. Lee los
+principios de diseño de arriba y las invariantes de seguridad en
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Documenta los cambios en `README.md` y `README.es.md`.

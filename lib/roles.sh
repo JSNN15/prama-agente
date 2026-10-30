@@ -39,6 +39,16 @@ Comandos del bus multi-agente (ejecútalos con tu herramienta Bash):
 - Leer la terminal de otro agente:                   prama-agent logs <sesión> 80
 EOF
 )
+  local agents_list=${AGENTS[*]} models_help
+  agents_list=${agents_list// /|}
+  models_help="Modelos: claude → opus | sonnet | haiku (o un id completo); agy → ids de 'prama-agent fleet models agy'
+(p. ej. gemini-3.8-flash-high). Usa modelos rápidos/baratos para tareas mecánicas (tests, refactors
+acotados, documentación) y los más capaces para diseño y cambios delicados."
+  if is_in opencode "${AGENTS[@]}"; then
+    models_help+="
+opencode (experimental) → openrouter/<proveedor>/<modelo> (p. ej. openrouter/qwen/qwen3-coder:free);
+lista con: prama-agent fleet models opencode."
+  fi
   case "$role" in
     coordinator)
       cat <<EOF
@@ -49,22 +59,19 @@ Delega con 'prama-agent bus assign', revisa el progreso con 'prama-agent bus sta
 'prama-agent logs <sesión>'. Los reportes de otros agentes te llegarán como "[REPORTE DE <sesión>]: …".
 Las alertas de la flota llegan como "[ALERTA PRAMA] …" (agente bloqueado por login, cuota, crédito,
 modelo, o detenido) y cuando una cuenta pasa el ${PRAMA_QUOTA_WARN:-90}% de su cuota (ventana 5h o 7d): decide si
-reiniciarlo, cambiarle el modelo, reasignar su tarea, repartir a agentes más baratos o avisar al humano.
+reiniciarlo, cambiarle el modelo, reasignar su tarea, repartir a otros agentes/modelos o avisar al humano.
 $bus_help
 
 Gestión de la flota (tú administras a tus agentes; todo devuelve JSON con --json):
 - Estado completo (estado, bloqueo y motivo, modelo, preset, cola, cuota % y reinicio): prama-agent fleet status --json
 - Agentes disponibles y presets (perfiles con skills):              prama-agent fleet presets
-- Lanzar un agente extra:  prama-agent fleet spawn <claude|agy|opencode> $zone [--role executor|reader] [--model M] [--preset P] [--name N] [--worktree rama] [--task "instrucción inicial"]
+- Lanzar un agente extra:  prama-agent fleet spawn <$agents_list> $zone [--role executor|reader] [--model M] [--preset P] [--name N] [--worktree rama] [--task "instrucción inicial"]
 - Cambiar el modelo (reinicia en el mismo panel y conserva la conversación): prama-agent fleet model <sesión> <modelo>
 - Editar configuración (modelo, esfuerzo, preset, permisos):  prama-agent fleet edit <sesión> [--model M] [--effort E] [--preset P]
 - Reiniciar un agente (p. ej. tras un error):                prama-agent fleet restart <sesión>
 - Cerrar un agente que ya no necesitas:                      prama-agent fleet kill <sesión>
-Modelos: claude → opus | sonnet | haiku (o un id completo); opencode → openrouter/<proveedor>/<modelo>
-(p. ej. openrouter/qwen/qwen3-coder:free, openrouter/moonshotai/kimi-k2, openrouter/z-ai/glm-4.6,
-openrouter/deepseek/deepseek-chat); lista con: prama-agent fleet models opencode.
-Usa opencode con modelos gratuitos/baratos para tareas mecánicas (tests, refactors acotados,
-documentación) y claude para diseño y cambios delicados. Cierra los agentes extra al terminar.
+$models_help
+Cierra los agentes extra al terminar.
 Límite de agentes simultáneos: ${PRAMA_FLEET_MAX:-8}.
 EOF
       ;;

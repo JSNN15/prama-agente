@@ -1,5 +1,8 @@
 # prama-agent architecture (v6)
 
+Internal design reference for contributors (English only). User documentation:
+[README.md](../README.md) · [README.es.md](../README.es.md).
+
 ## Module ownership
 
 | File | Responsibility |
@@ -49,11 +52,12 @@ creates private dirs).
 
 | Function | Purpose |
 | --- | --- |
-| `prama_init` | Load config, discover zones, create private dirs |
+| `prama_init` | Load config, discover zones, create private dirs, filter `AGENTS` (`SUPPORTED_AGENTS`, plus `EXPERIMENTAL_AGENTS` with `PRAMA_EXPERIMENTAL=1`) |
 | `zone_dir <zone>` | Print directory, return 1 if unknown |
 | `valid_session_name <s>` / `slugify <s>` / `session_name_for <agent> <zone> <role> [wt]` | Session naming |
 | `tmx …` | tmux on the prama server |
-| `tmx_running` / `tmx_has <s>` / `tmx_kill <s>` | Server / session checks |
+| `tmx_running` / `tmx_has <s>` | Server / session checks |
+| `tmx_kill <s>` | TERM (then KILL after 5 s) to every pane's process group, then `kill-session`: agents that ignore SIGHUP never outlive their session |
 | `tmx_send <s> <text>` | Type literal text + Enter |
 | `tmx_capture <s> [lines] [ansi]` | Last N lines of the active pane |
 | `tmx_attach <s> [exec_mode]` | Attach/switch/nested-attach correctly from anywhere |

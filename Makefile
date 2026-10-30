@@ -20,4 +20,5 @@ install:
 	PREFIX="$(PREFIX)" CONF_DIR="$(CONF_DIR)" bash ./install.sh
 
 uninstall:
+	-prama-agent fleet hooks uninstall >/dev/null 2>&1
 	rm -f "$(PREFIX)/bin/prama-agent" "$(PREFIX)/bin/prama-agy" "$(PREFIX)/bin/prama-claude" /etc/bash_completion.d/prama-agent

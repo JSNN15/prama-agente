@@ -1,20 +1,39 @@
 # Presets
 
-Un preset es un perfil de agente reutilizable: agente, modelo, esfuerzo, rol, prompt y skills.
-Se usan con `--preset <nombre>` al lanzar (`prama-agent claude backend --preset reviewer`) o
-desde el coordinador (`prama-agent fleet spawn claude backend --preset reviewer`).
+**English** · [Español](#español)
 
-Búsqueda, por prioridad: `~/.config/prama-agent/presets/`, `/etc/prama-agent/presets/`, y esta carpeta.
-Los archivos son `KEY=value` (nunca se ejecutan). Las rutas relativas parten de la carpeta del preset;
-las listas se separan con `:`.
+A preset is a reusable agent profile: agent, model, effort, role, extra prompt and skills. Use it when
+launching (`prama-agent claude backend --preset reviewer`) or from a coordinator
+(`prama-agent fleet spawn claude backend --preset reviewer`).
 
-| Clave | Uso |
+Lookup order: `~/.config/prama-agent/presets/`, `/etc/prama-agent/presets/`, then this folder. Files
+are `KEY=value` lines and are never executed. Relative paths are resolved from the preset's folder;
+lists are separated by `:`.
+
+| Key | Effect |
 | --- | --- |
-| `DESCRIPTION` | texto para `prama-agent fleet presets` |
-| `AGENT` `ROLE` `PROFILE` | valores por defecto (los flags explícitos ganan) |
-| `MODEL` `EFFORT` | `--model` / `--effort` (en opencode, el modelo va en su configuración) |
-| `PROMPT` / `PROMPT_FILE` | instrucciones extra que se suman al prompt de rol |
-| `SKILLS_DIR` | carpeta con `<skill>/SKILL.md`; prama la empaqueta como plugin (`--plugin-dir`) solo para ese agente |
-| `PLUGIN_DIRS` `ADD_DIRS` | `--plugin-dir` / `--add-dir` adicionales (claude) |
-| `AGENTS_FILE` `MCP_CONFIG` | `--agents` / `--mcp-config` (claude) |
-| `ALLOWED_TOOLS` `DISALLOWED_TOOLS` | `--allowed-tools` / `--disallowed-tools` (claude) |
+| `DESCRIPTION` | text shown by `prama-agent fleet presets` |
+| `AGENT` `ROLE` `PROFILE` | defaults (explicit flags win) |
+| `MODEL` `EFFORT` | `--model` / `--effort` (OpenCode: the model goes into its configuration) |
+| `PROMPT` / `PROMPT_FILE` | extra instructions appended to the role prompt |
+| `SKILLS_DIR` | folder of `<skill>/SKILL.md`; packaged as a plugin (`--plugin-dir`) for that agent only |
+| `PLUGIN_DIRS` `ADD_DIRS` | extra `--plugin-dir` / `--add-dir` (Claude Code) |
+| `AGENTS_FILE` `MCP_CONFIG` | `--agents` / `--mcp-config` (Claude Code) |
+| `ALLOWED_TOOLS` `DISALLOWED_TOOLS` | `--allowed-tools` / `--disallowed-tools` (Claude Code) |
+
+Bundled presets:
+
+| Preset | Agent | Purpose |
+| --- | --- | --- |
+| `reviewer` | Claude Code | read-only code review |
+| `architect` | Claude Code | design work at extra-high effort |
+| `cheap` | agy (Flash) | mechanical tasks: tests, scoped refactors, docs |
+| `openrouter-free` | OpenCode | *experimental*, needs `PRAMA_EXPERIMENTAL=1` |
+
+## Español
+
+Un preset es un perfil de agente reutilizable: agente, modelo, esfuerzo, rol, prompt adicional y
+skills. Se usa al lanzar (`--preset <nombre>`) o desde el coordinador con `fleet spawn`. Se buscan en
+`~/.config/prama-agent/presets/`, `/etc/prama-agent/presets/` y esta carpeta; son líneas `KEY=value` y
+nunca se ejecutan. Las claves son las de la tabla anterior. `SKILLS_DIR` apunta a una carpeta con
+`<skill>/SKILL.md` que se monta como plugin solo para ese agente.

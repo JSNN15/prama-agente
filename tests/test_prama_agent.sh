@@ -51,6 +51,7 @@ mkdir -p "$TMP_ROOT/interp" "$TMP_ROOT/ctl"
 # Per-session mock behaviour (tmux does not forward the client's environment to new sessions):
 #   mock_ctl <session> interactive        → the mock reads stdin until SIGTERM
 #   mock_ctl <session> screen "<text>"    → the mock prints <text> after starting
+#   mock_ctl <session> nohup              → the mock ignores SIGHUP
 mock_ctl() {
   if [ "$2" = screen ]; then printf '%s\n' "$3" > "$TMP_ROOT/ctl/$1.screen"
   else : > "$TMP_ROOT/ctl/$1.$2"; fi
@@ -67,6 +68,7 @@ printf 'MOCK_AGENT %s ARGS:' "$(basename "$0")"; printf ' [%s]' "$@"; printf '\n
 echo "ENV role=${PRAMA_ROLE:-none} model=${ANTHROPIC_MODEL:-native} sandbox=${IS_SANDBOX:-0}"
 [ -n "${OPENCODE_CONFIG_CONTENT:-}" ] && echo "OCCFG $OPENCODE_CONFIG_CONTENT key=${OPENROUTER_API_KEY:+set}"
 [ -f "$CTL.screen" ] && cat "$CTL.screen"
+[ -f "$CTL.nohup" ] && trap '' HUP   # like agy: survives losing its terminal
 if [ -f "$CTL.interactive" ]; then
   # Behaves like an interactive CLI: echoes every line it receives until SIGTERM.
   trap 'echo MOCK_TERM; exit 143' TERM
@@ -117,9 +119,14 @@ assert_not_contains "Remote control off by default" "--remote-control" "$out"
 assert_contains "Dry-run targets the dedicated tmux server" "tmux -L $PRAMA_TMUX_SOCKET" "$out"
 assert_contains "claude --yolo"   "--dangerously-skip-permissions" "$("$BIN" claude alpha --yolo --dry-run)"
 assert_contains "agy --yolo"      "agy --dangerously-skip-permissions" "$("$BIN" agy alpha --yolo --dry-run)"
-assert_contains "opencode --yolo" "opencode --auto" "$("$BIN" opencode alpha --yolo --dry-run)"
 out=$("$BIN" agents --json)
-assert_true "Only claude, agy and opencode are supported" "jq -e '[.[].name] == [\"claude\",\"agy\",\"opencode\"]' >/dev/null <<< '$out'"
+assert_true "Enabled agents by default: claude and agy" "jq -e '[.[].name] == [\"claude\",\"agy\"]' >/dev/null <<< '$out'"
+out=$("$BIN" opencode alpha --dry-run 2>&1); rc=$?
+assert_true "opencode is experimental: off unless PRAMA_EXPERIMENTAL=1" "[ $rc -ne 0 ]"
+export PRAMA_EXPERIMENTAL=1   # the rest of the suite also covers the experimental opencode integration
+assert_contains "opencode --yolo (experimental)" "opencode --auto" "$("$BIN" opencode alpha --yolo --dry-run)"
+out=$("$BIN" agents --json)
+assert_true "PRAMA_EXPERIMENTAL=1 adds opencode" "jq -e '[.[].name] == [\"claude\",\"agy\",\"opencode\"]' >/dev/null <<< '$out'"
 out=$("$BIN" claude alpha --role reader --yolo --dry-run 2>&1)
 assert_contains "Reader forces plan on claude even with --yolo" "--permission-mode plan" "$out"
 assert_not_contains "Reader never gets bypass flag" "--dangerously-skip-permissions" "$out"
@@ -247,6 +254,13 @@ assert_not_contains "No fuzzy/prefix matching of targets" "should not arrive" "$
 sleep 0.5
 assert_not_contains "Broadcast never types into a plain shell" "hello agents" "$($P capture-pane -p -t '=tp-usershell:' -S -40)"
 "$BIN" stop --all -y >/dev/null 2>&1; $P kill-session -t =tp-usershell 2>/dev/null
+
+section "Stopping a session ends its agent"
+mock_ctl tp-hup interactive; mock_ctl tp-hup nohup; "$BIN" agy alpha --bg --name tp-hup >/dev/null
+wait_for 5 "$P capture-pane -p -t '=tp-hup:' | grep -q MOCK_AGENT"
+hpid=$(pgrep -f "$TMP_ROOT/bin/agy" | head -n 1)
+"$BIN" stop tp-hup >/dev/null 2>&1
+assert_true "An agent that ignores SIGHUP does not survive 'stop'" "[ -n '$hpid' ] && wait_for 7 '! kill -0 $hpid 2>/dev/null'"
 
 section "Supervised session E2E"
 MOCK_SLEEP=2 "$BIN" claude alpha --bg --role coordinator --name tp-e2e --profile deepseek >/dev/null
