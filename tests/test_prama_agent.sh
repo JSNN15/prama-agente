@@ -313,6 +313,17 @@ assert_eq "…reason 'login'" "login" "$(st tp-h2 .blocked_reason)"
 mock_ctl tp-h3 interactive; mock_ctl tp-h3 screen "Do you trust the files in this folder?"; "$BIN" claude beta --bg --name tp-h3 >/dev/null
 wait_for 5 "$P capture-pane -p -t '=tp-h3:' | grep -q 'trust'"
 assert_eq "Trust dialog → BLOCKED (trust)" "trust" "$(st tp-h3 .blocked_reason)"
+# Regression (found live): the watchdog's alert about another agent's 429, wrapped by the CLI in a
+# narrow cockpit pane, made the coordinator itself look blocked, so its queue stopped draining.
+quoted=$'⏺ Reviso el equipo.\n──────────────────────────────────\n❯ [ALERTA PRAMA] \'tp-x\'\nestá BLOQUEADO (limit): generating\nand executing: RESOURCE_EXHAUSTED\n(code 429): Individual quota\n──────────────────────────────────'
+out=$(bash -c 'source "'"$REPO_DIR"'/lib/core.sh"; screen_block_reason "$1" || echo none' _ "$quoted")
+assert_eq "A quoted alert wrapped over several lines is not a block" "none" "$out"
+out=$(bash -c 'source "'"$REPO_DIR"'/lib/core.sh"; screen_block_reason "$1" || echo none' _ $'⏺ Done.\nError: RESOURCE_EXHAUSTED (code 429): Individual quota reached')
+assert_contains "…while the agent's own 429 output still is" "limit|" "$out"
+mock_ctl tp-h4 interactive; mock_ctl tp-h4 screen "Error: RESOURCE_EXHAUSTED (code 429) seen in a log"; "$BIN" claude beta --bg --name tp-h4 >/dev/null
+wait_for 5 "$P capture-pane -p -t '=tp-h4:' | grep -q 'RESOURCE_EXHAUSTED'"
+printf '{"hook_event_name":"Stop","session_id":"h4"}' | PRAMA_SESSION=tp-h4 "$BIN" --internal-hook claude
+assert_eq "Healthy hooks win over quota text on screen" "READY" "$(st tp-h4 .state)"
 "$BIN" stop --all -y >/dev/null 2>&1
 
 section "Fleet: spawn, model change in place, guard rails"

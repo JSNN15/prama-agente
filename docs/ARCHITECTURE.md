@@ -44,6 +44,9 @@ creates private dirs).
 8. Functions that can fail inside `$(...)` must be followed by `|| exit 1` / `|| return 1` — `die`
    only exits the subshell.
 9. **Never type into an agent that is not READY/WORKING** (`bus_can_inject`); BLOCKED agents get a queue.
+   Because a wrong BLOCKED stops an agent's queue, screen detection is conservative: typed messages are
+   skipped whole (CLIs wrap them without a marker), and with healthy hooks only pre-hook dialogs
+   (login, trust, model) count.
 10. **Hooks never fail or print** (`--internal-hook` always exits 0, stdout/stderr discarded; for agy it
     prints exactly `{}`, the "no decision" answer). prama never edits a user file it cannot parse, and
     only owns the `prama-agent` key of `~/.gemini/config/hooks.json`.

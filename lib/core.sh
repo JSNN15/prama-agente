@@ -709,16 +709,23 @@ BLOCK_PATTERNS=(
   'model|model not found|model_not_found|unrecognized_model|issue with the selected model|not a valid model|select model|choose a model'
 )
 
-# screen_block_reason <text> → prints "reason|matching line"; returns 1 when nothing matches.
+# screen_block_reason <text> [reasons_re] → prints "reason|matching line"; returns 1 when nothing
+# matches. reasons_re limits the categories considered (e.g. 'login|trust|model').
 screen_block_reason() {
-  local text=$1 entry reason pats line low
+  local text=$1 only=${2:-} entry reason pats line low
   local -a lines=()
   # Ignore messages typed into the agent (prompt echo "> …", prama's own [TAREA/ALERTA…] texts):
-  # they quote problems, they are not the agent being blocked.
-  mapfile -t lines < <(printf '%s\n' "$text" | strip_ansi_stream | grep -v '^[[:space:]]*$' \
-    | grep -vE '^[[:space:]│|]*[>❯›]|\[(ALERTA PRAMA|PRAMA|TAREA|REPORTE|BROADCAST)' | tail -n 8)
+  # they quote problems, they are not the agent being blocked. A message is skipped whole, from its
+  # prompt marker to the input box border or the agent's next output: CLIs wrap long messages
+  # themselves (a narrow cockpit pane), so its continuation lines carry no marker.
+  mapfile -t lines < <(printf '%s\n' "$text" | strip_ansi_stream | awk '
+      /^[[:space:]]*$/ { next }
+      /^[[:space:]│|]*[>❯›]/ || /\[(ALERTA PRAMA|PRAMA|TAREA|REPORTE|BROADCAST)/ { msg = 1; next }
+      msg && (/^[[:space:]]*[─━═-][─━═-][─━═-]/ || /^[[:space:]]*[⏺●✻✶✳⎿╭╰]/) { msg = 0 }
+      !msg { print }' | tail -n 8)
   for entry in "${BLOCK_PATTERNS[@]}"; do
     reason=${entry%%|*} pats=${entry#*|}
+    [ -z "$only" ] || [[ "$reason" =~ ^($only)$ ]] || continue
     for line in "${lines[@]}"; do
       low=${line,,}
       if [[ "$low" =~ $pats ]]; then
@@ -751,7 +758,15 @@ session_block_info() {
     fi
   fi
   [ -n "$snippet" ] || snippet=$(tmx_capture "$s" 12)
-  screen_block_reason "$snippet"
+  # Hooks that report a healthy agent are authoritative for quota, credit and auth failures (the
+  # CLI reports those itself); the screen only adds the dialogs shown before hooks run. Otherwise a
+  # coordinator that is merely *reading* about a 429 would be marked blocked and stop receiving
+  # messages.
+  if [ "$(health_get "$s" HEALTH)" = ok ]; then
+    screen_block_reason "$snippet" 'login|trust|model'
+  else
+    screen_block_reason "$snippet"
+  fi
 }
 
 # True when an agent CLI runs somewhere under the session's pane. The supervisor runs the agent

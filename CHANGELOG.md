@@ -36,6 +36,11 @@ All notable changes to this project are documented here. The format follows
   commands, which use bash quoting, with the user's shell. prama's tmux server now runs commands with
   bash (`default-shell`) while plain panes still open the user's own shell (`default-command`). Found
   by the new container matrix.
+- **A coordinator could be marked BLOCKED by an alert about another agent.** The watchdog's
+  "[ALERTA PRAMA] … RESOURCE_EXHAUSTED (code 429)" message, wrapped by the CLI over several lines in a
+  narrow cockpit pane, matched the screen quota patterns; the coordinator then stopped receiving its
+  queue. Typed messages are now skipped whole, and when an agent's hooks report it healthy the screen
+  can only add pre-hook dialogs (login, trust, model). Found in production; regression tests added.
 
 ## [6.1.0] - 2026-10-30
 
