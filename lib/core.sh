@@ -718,10 +718,12 @@ screen_block_reason() {
   # they quote problems, they are not the agent being blocked. A message is skipped whole, from its
   # prompt marker to the input box border or the agent's next output: CLIs wrap long messages
   # themselves (a narrow cockpit pane), so its continuation lines carry no marker.
-  mapfile -t lines < <(printf '%s\n' "$text" | strip_ansi_stream | awk '
-      /^[[:space:]]*$/ { next }
-      /^[[:space:]│|]*[>❯›]/ || /\[(ALERTA PRAMA|PRAMA|TAREA|REPORTE|BROADCAST)/ { msg = 1; next }
-      msg && (/^[[:space:]]*[─━═-][─━═-][─━═-]/ || /^[[:space:]]*[⏺●✻✶✳⎿╭╰]/) { msg = 0 }
+  # Byte-wise alternations (LC_ALL=C): mawk, the default awk on Debian/Ubuntu, does not handle
+  # multibyte characters inside [...] brackets.
+  mapfile -t lines < <(printf '%s\n' "$text" | strip_ansi_stream | LC_ALL=C awk '
+      /^[ \t]*$/ { next }
+      /^([ \t|]|│)*(>|❯|›)/ || /\[(ALERTA PRAMA|PRAMA|TAREA|REPORTE|BROADCAST)/ { msg = 1; next }
+      msg && (/^[ \t]*(─|━|═|-)(─|━|═|-)(─|━|═|-)/ || /^[ \t]*(⏺|●|✻|✶|✳|⎿|╭|╰)/) { msg = 0 }
       !msg { print }' | tail -n 8)
   for entry in "${BLOCK_PATTERNS[@]}"; do
     reason=${entry%%|*} pats=${entry#*|}

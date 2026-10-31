@@ -164,6 +164,16 @@ subcmd_update() {
   if [ "$before" = "$after" ]; then ok "Ya tienes la última versión (v$VERSION, $after)."
   else ok "Actualizado: $before → $after ($("$SELF_PATH" --version))."; fi
   "$SELF_PATH" doctor >/dev/null 2>&1 || true   # regenerates tmux.conf, hooks, migrations
+  if [ "$before" != "$after" ]; then
+    # Long-running prama processes keep the code they started with: restart them on the new one.
+    if watchdog_running; then
+      "$SELF_PATH" fleet watchdog stop >/dev/null 2>&1; "$SELF_PATH" fleet watchdog start >/dev/null 2>&1 \
+        && ok "Watchdog reiniciado con la nueva versión."
+    fi
+    if tmx_has "${PRAMA_SESSION_PREFIX}-telegram-bot"; then
+      "$SELF_PATH" telegram restart >/dev/null 2>&1 && ok "Bot de Telegram reiniciado con la nueva versión."
+    fi
+  fi
   info_msg "Los agentes en curso usan la versión anterior hasta que los reinicies (prama-agent fleet restart <sesión>)."
 }
 
@@ -178,11 +188,12 @@ subcmd_info() {
   box_row "$C_BORDER_HI" "  ${KEY_BADGE} $PRAMA_NAV_KEY ${C_OFF} lista de agentes · ${KEY_BADGE} $PRAMA_COCKPIT_KEY ${C_OFF} cockpit del equipo ⇄ agente · ${KEY_BADGE} Ctrl+b n ${C_OFF} siguiente"
   box_sep "$C_BORDER_HI"
   box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}Agentes que colaboran${C_OFF}"
-  box_row "$C_BORDER_HI" "  Coordinar enjambre → Lanzar dupla: un coordinador y un ejecutor"
-  box_row "$C_BORDER_HI" "  que se hablan con ${C_NEON}prama-agent bus assign / report${C_OFF}."
+  box_row "$C_BORDER_HI" "  ${KEY_BADGE} s ${C_OFF} en el menú o ${C_NEON}prama-agent swarm <zona>${C_OFF}: coordinador + agentes."
+  box_row "$C_BORDER_HI" "  Se hablan por el bus: ${C_NEON}bus assign${C_OFF} / ${C_NEON}bus report${C_OFF}."
   box_sep "$C_BORDER_HI"
-  box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}Desde el celular sin SSH${C_OFF}"
-  box_row "$C_BORDER_HI" "  ${C_NEON}prama-agent telegram setup${C_OFF}: vincula un bot con un código de un solo uso."
+  box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}Desde el celular${C_OFF}"
+  box_row "$C_BORDER_HI" "  Terminal: usa mosh; el cockpit muestra un agente por pantalla (◀ ▶)."
+  box_row "$C_BORDER_HI" "  Sin terminal: ${C_NEON}prama-agent telegram setup${C_OFF} (equipos, cuota, reportes)."
   box_sep "$C_BORDER_HI"
   box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}Permisos${C_OFF}"
   box_row "$C_BORDER_HI" "  $(perm_badge ask)  ·  $(perm_badge plan)  ·  $(perm_badge yolo)"

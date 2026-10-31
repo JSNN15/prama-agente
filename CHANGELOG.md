@@ -28,6 +28,9 @@ All notable changes to this project are documented here. The format follows
   CODEOWNERS, `.editorconfig`, `make test-matrix`.
 
 ### Changed
+- `prama-agent update` restarts the watchdog and the Telegram bot when the version changes (they are
+  long-running and kept the old code until then).
+- The quick guide (`prama-agent info`) describes teams and the phone workflow.
 - The menu's action rows show only their label on a phone instead of a description cut short.
 - Telegram's *Enjambre* (coordinator + one executor) became *Nuevo equipo* with a choice of workers.
 

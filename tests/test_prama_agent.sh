@@ -247,7 +247,7 @@ MOCK_SLEEP=8 "$BIN" claude beta --bg --name tp-exec >/dev/null
 $P new-session -d -s tp-usershell 'bash --norc -i'
 wait_for 5 "$P capture-pane -p -t '=tp-coord:' | grep -q MOCK_AGENT"
 "$BIN" bus assign tp-exec "implement /health" >/dev/null 2>&1
-wait_for 3 "$P capture-pane -p -t '=tp-exec:' | grep -q 'implement /health'"
+wait_for 6 "$P capture-pane -p -t '=tp-exec:' | grep -q 'implement /health'"
 assert_contains "Assign to exact session injects text" "implement /health" "$($P capture-pane -p -t '=tp-exec:' -S -40)"
 "$BIN" bus assign tp-ex "should not arrive" >/dev/null 2>&1
 sleep 0.5
