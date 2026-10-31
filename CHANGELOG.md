@@ -16,7 +16,8 @@ All notable changes to this project are documented here. The format follows
   agent, `Ctrl+b n/p` next/previous agent; tappable `◂ MENU · ☰ AGENTES · ▦ COCKPIT` status-bar
   buttons (tmux ≥ 3.3).
 - TUI: sessions grouped as teams, `s` new-team wizard, cockpit action with team picker; restart keeps
-  the conversation.
+  the conversation; `x` on a coordinator closes the whole team.
+- Cockpit hint on narrow screens; docs recommend a tablet or computer for the cockpit.
 - One-line installer (`curl … | bash`, per-user without root) and `prama-agent update [version]`.
 - NOTICE, CITATION.cff and author information.
 

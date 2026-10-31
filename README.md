@@ -82,7 +82,7 @@ prama-agent attach prama-claude-backend       # reattach (Alt+m returns to the m
 
 In the interactive UI: `n` new agent, `s` new team, `↵` attach, `c` team cockpit, `t` send a task,
 `l` history, `r`/`x` restart/stop, `/` filter, `?` help. Sessions are listed as teams (a coordinator
-followed by its agents). It adapts to the terminal width (side-by-side from 100 columns,
+followed by its agents); `x` on a coordinator closes its whole team. It adapts to the terminal width (side-by-side from 100 columns,
 stacked on a phone), refreshes every 2 s and supports touch and mouse wheel.
 
 A **zone** is a named working directory, usually a repository. Zones come from `config.env`, or are
@@ -115,6 +115,9 @@ from the cockpit:
 
 Keys are configurable (`PRAMA_MENU_KEY`, `PRAMA_NAV_KEY`, `PRAMA_COCKPIT_KEY`); the buttons work by
 touch in Termius.
+
+> **Screen size.** The cockpit is best on a tablet or a computer (100+ columns). On a phone it works:
+> zoom into one agent with `Ctrl+b z`, or skip the cockpit and jump between agents with `Alt+a`.
 
 ## Fleet management
 

@@ -1367,6 +1367,21 @@ _tui_session_action() {
         tui_collect 0
       fi ;;
     x)
+      # A coordinator with agents: one confirmation closes the whole team (and its cockpit).
+      local zone members=0 m
+      if [ "$(session_role "$s")" = coordinator ]; then
+        zone=$(state_get "$s" ZONE)
+        while IFS= read -r m; do [ "$(state_get "$m" PARENT)" = "$s" ] && (( members++ )); done < <(prama_sessions)
+        if (( members )); then
+          if tui_confirm "¿Cerrar el equipo de «$zone»? Se detienen el coordinador y sus $members agente(s)." 1 "Cerrar equipo"; then
+            if ( _swarm_stop "$zone" ) >/dev/null 2>&1; then tui_toast ok "Equipo de $zone cerrado ($(( members + 1 )) agentes)"
+            else tui_toast err "No se pudo cerrar el equipo de $zone"; fi
+            TUI_ROLE_CACHE=() TUI_MCACHE=()
+            tui_collect 0
+          fi
+          return 0
+        fi
+      fi
       if tui_confirm "¿Cerrar «$short»? El agente se detendrá y se perderá lo que no haya guardado." 1 "Cerrar"; then
         tmx_kill "$s"
         state_remove "$s"

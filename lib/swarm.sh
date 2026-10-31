@@ -249,6 +249,11 @@ subcmd_cockpit() {
     info_msg "Cockpit listo: prama-agent attach $cs"
     return 0
   fi
+  refresh_dimensions
+  if (( ${COLS:-120} < 100 )); then
+    info_msg "Pantalla angosta: el cockpit rinde mejor en tablet o PC. Ctrl+b z agranda el panel con el foco; $PRAMA_NAV_KEY salta entre agentes."
+    sleep 2
+  fi
   type restore_locale >/dev/null 2>&1 && restore_locale
   (( ${IN_TUI:-0} )) && declare -F tui_leave_screen >/dev/null && tui_leave_screen
   tmx_attach "$cs"

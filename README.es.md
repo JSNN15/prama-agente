@@ -94,7 +94,8 @@ Una **zona** es un directorio de trabajo con nombre, normalmente un repositorio.
 | `?` | ayuda | | |
 | `o` `y` `e` `p` `w` `g` | rol · permisos · remoto · perfil LLM · worktree · segundo plano | `q` | salir |
 
-Las sesiones se listan por equipo (el coordinador y debajo sus agentes). La interfaz se adapta al ancho
+Las sesiones se listan por equipo (el coordinador y debajo sus agentes); `x` sobre un coordinador
+cierra el equipo completo. La interfaz se adapta al ancho
 (lista y vista previa lado a lado desde 100 columnas, apiladas en el celular), se refresca cada 2 s y
 admite toques y rueda del ratón.
 
@@ -125,6 +126,9 @@ agente o desde el cockpit:
 
 Las teclas se configuran con `PRAMA_MENU_KEY`, `PRAMA_NAV_KEY` y `PRAMA_COCKPIT_KEY`; los botones
 funcionan con toques en Termius.
+
+> **Tamaño de pantalla.** El cockpit rinde mejor en tablet o computador (100+ columnas). En el teléfono
+> es usable: agranda un agente con `Ctrl+b z`, o sáltate el cockpit y muévete entre agentes con `Alt+a`.
 
 ## Administración de la flota
 
