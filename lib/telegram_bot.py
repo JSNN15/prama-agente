@@ -64,14 +64,14 @@ def log(msg):
         sys.stderr.write(line + "\n")
         sys.stderr.flush()
     except OSError:
-        pass
+        pass  # stderr closed (daemon detached): the log file below is still written
     if LOG_PATH:
         try:
             fd = os.open(LOG_PATH, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
             with os.fdopen(fd, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
         except OSError:
-            pass
+            pass  # logging must never take the bot down (disk full, file removed)
 
 
 def e(s):
@@ -538,8 +538,9 @@ class Bot:
         if not reps:
             lines.append("<i>No hay reportes abiertos.</i>")
         else:
-            lines += ["", "En el servidor: <code>prama-agent feedback show &lt;id&gt;</code> · "
-                          "<code>feedback export &lt;id&gt;</code> para un issue de GitHub."]
+            hint = ("En el servidor: <code>prama-agent feedback show &lt;id&gt;</code> · "
+                    + "<code>feedback export &lt;id&gt;</code> para un issue de GitHub.")
+            lines += ["", hint]
         return "\n".join(lines), [[self.b("🔄 Actualizar", "f"), self.b("⬅ Volver", "m")]]
 
     def do_team(self, zone, agent, count, edit_id=None):
