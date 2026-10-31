@@ -3,6 +3,8 @@
 **English** · [Español](#español)
 
 Thanks for your interest in prama-agent. Issues and pull requests are welcome in English or Spanish.
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Questions and ideas go to
+[Discussions](https://github.com/JSNN15/prama-agente/discussions); bugs to the issue forms.
 
 ## Design principles
 
@@ -46,7 +48,9 @@ By contributing you agree that your contributions are licensed under the
 
 ## Español
 
-Los issues y pull requests son bienvenidos en español o en inglés. Antes de abrir un PR ejecuta
+Los issues y pull requests son bienvenidos en español o en inglés. Quienes participan siguen el
+[Código de Conducta](CODE_OF_CONDUCT.md); las dudas e ideas van a
+[Discussions](https://github.com/JSNN15/prama-agente/discussions). Antes de abrir un PR ejecuta
 `make lint` y `make test` (y `make test-matrix` si tienes Docker); cada corrección de errores debe incluir
 una prueba de regresión. El CI corre la suite en Ubuntu 22.04, Debian 12 y Ubuntu 24.04 y debe quedar en
 verde en todas. Si encuentras un fallo usando prama con agentes, `prama-agent feedback export <id>` te da
