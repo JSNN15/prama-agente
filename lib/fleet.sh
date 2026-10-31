@@ -32,9 +32,13 @@ _fleet_authorize() {
     children)
       [ "$(state_get "$t" PARENT)" = "$caller" ] || die "'$t' no fue lanzado por $caller (PRAMA_FLEET_SCOPE=children)." ;;
     *)
-      local tz cz
+      local tz cz tt ct
       tz=$(state_get "$t" ZONE) cz=$(state_get "$caller" ZONE)
-      [ -n "$cz" ] && [ "$tz" = "$cz" ] || die "'$t' está fuera de tu zona (${cz:-?}) (PRAMA_FLEET_SCOPE=zone)." ;;
+      [ -n "$cz" ] && [ "$tz" = "$cz" ] || die "'$t' está fuera de tu zona (${cz:-?}) (PRAMA_FLEET_SCOPE=zone)."
+      # Several teams can share a zone: an agent of another team is not yours to manage.
+      tt=$(session_team "$t") || tt=''
+      ct=$(session_team "$caller") || ct=''
+      [ -z "$tt" ] || [ "$tt" = "$ct" ] || die "'$t' pertenece a otro equipo («$(team_name "$tt")»)." ;;
   esac
 }
 
@@ -78,9 +82,11 @@ _fleet_json_row() {
   st=$(detect_session_state "$s")
   if [ "$st" = BLOCKED ]; then info=$(session_block_info "$s"); reason=${info%%|*} detail=${info#*|}; fi
   model=$(health_get "$s" MODEL "$(state_get "$s" MODEL)")
-  printf '{"session":"%s","agent":"%s","zone":"%s","role":"%s","state":"%s","blocked_reason":"%s","blocked_detail":"%s","model":"%s","effort":"%s","preset":"%s","profile":"%s","perm":"%s","parent":"%s","queue":%d,"activity":"%s","started":"%s","quota":%s}' \
+  local team='' tc
+  if tc=$(session_team "$s"); then team=$(team_name "$tc"); fi
+  printf '{"session":"%s","agent":"%s","zone":"%s","team":"%s","role":"%s","state":"%s","blocked_reason":"%s","blocked_detail":"%s","model":"%s","effort":"%s","preset":"%s","profile":"%s","perm":"%s","parent":"%s","queue":%d,"activity":"%s","started":"%s","quota":%s}' \
     "$(json_escape "$s")" "$(json_escape "$(state_get "$s" AGENT)")" "$(json_escape "$(state_get "$s" ZONE)")" \
-    "$(session_role "$s")" "$st" "$(json_escape "$reason")" "$(json_escape "$detail")" "$(json_escape "$model")" \
+    "$(json_escape "$team")" "$(session_role "$s")" "$st" "$(json_escape "$reason")" "$(json_escape "$detail")" "$(json_escape "$model")" \
     "$(json_escape "$(state_get "$s" EFFORT)")" "$(json_escape "$(state_get "$s" PRESET)")" \
     "$(json_escape "$(state_get "$s" PROFILE default)")" "$(state_get "$s" PERM)" \
     "$(json_escape "$(state_get "$s" PARENT)")" "$(queue_len "$s")" "$(health_get "$s" ACTIVITY)" \

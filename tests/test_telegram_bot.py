@@ -16,15 +16,18 @@ tb = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tb)
 
 COORD = "prama-coordinator-claude-backend"
+SEC = "prama-backend-seguridad-coord"
 FLEET = [
-    {"session": COORD, "agent": "claude", "zone": "backend", "role": "coordinator", "state": "READY",
+    {"session": COORD, "agent": "claude", "zone": "backend", "team": "principal", "role": "coordinator", "state": "READY",
      "model": "opus", "parent": "operator", "queue": 0,
      "quota": {"five_hour_pct": 12, "seven_day_pct": 40, "context_pct": 8}},
-    {"session": "prama-agy-backend", "agent": "agy", "zone": "backend", "role": "executor",
+    {"session": "prama-agy-backend", "agent": "agy", "zone": "backend", "team": "principal", "role": "executor",
      "state": "WORKING", "model": "gemini-3.8-flash-high", "parent": COORD, "queue": 2,
      "quota": {"five_hour_pct": 93, "seven_day_pct": 7, "context_pct": 13}},
     {"session": "prama-claude-landing", "agent": "claude", "zone": "landing", "role": "executor",
      "state": "READY", "model": "", "parent": "operator", "queue": 0, "quota": None},
+    {"session": SEC, "agent": "claude", "zone": "backend", "team": "seguridad", "role": "coordinator",
+     "state": "READY", "model": "opus", "parent": "operator", "queue": 0, "quota": None},
 ]
 
 
@@ -66,12 +69,15 @@ class FakePrama(tb.Prama):
         if args[:3] == ["feedback", "list", "--json"]:
             return 0, '[{"id":"20261031-120000-abcd","kind":"bug","from":"%s","count":3,"summary":"fleet <model> fails"}]' % COORD, ""
         if args[0] == "swarm" and args[1] == "stop":
-            self.fleet_rows = [d for d in self.fleet_rows if d["zone"] != args[2]]
+            gone = {args[2]} | {d["session"] for d in self.fleet_rows if d.get("parent") == args[2]}
+            self.fleet_rows = [d for d in self.fleet_rows if d["session"] not in gone]
             return 0, "", ""
         if args[0] == "swarm":
-            if not any(d["role"] == "coordinator" and d["zone"] == args[1] for d in self.fleet_rows):
-                self.fleet_rows.append({"session": "prama-coordinator-claude-" + args[1], "agent": "claude",
-                                        "zone": args[1], "role": "coordinator", "state": "READY",
+            zone, team = args[1], args[args.index("--team") + 1]
+            if not any(d["role"] == "coordinator" and d["zone"] == zone and d.get("team") == team
+                       for d in self.fleet_rows):
+                self.fleet_rows.append({"session": "prama-%s-%s-coord" % (zone, team), "agent": "claude",
+                                        "zone": zone, "team": team, "role": "coordinator", "state": "READY",
                                         "parent": "operator", "quota": None})
             return 0, "", ""
         return 0, "", ""
@@ -94,10 +100,15 @@ class Helpers(unittest.TestCase):
 
     def test_teams_of(self):
         teams = tb.teams_of(FLEET)
-        self.assertEqual(list(teams), ["backend"])
-        coord, members = teams["backend"]
-        self.assertEqual(coord["session"], COORD)
+        self.assertEqual(sorted(teams), sorted([COORD, SEC]))
+        coord, members = teams[COORD]
         self.assertEqual([m["session"] for m in members], ["prama-agy-backend"])
+        self.assertEqual(teams[SEC][1], [])
+
+    def test_team_label(self):
+        teams = tb.teams_of(FLEET)
+        self.assertEqual(tb.team_label(teams[COORD][0]), "backend")
+        self.assertEqual(tb.team_label(teams[SEC][0]), "backend · seguridad")
 
     def test_parse_conf_never_executes(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as f:
@@ -116,53 +127,76 @@ class Helpers(unittest.TestCase):
 
 
 class Teams(unittest.TestCase):
-    def test_teams_view_lists_only_coordinated_zones(self):
+    def test_teams_view_lists_every_team_of_a_zone(self):
         bot, api, _ = make_bot()
         bot.on_text("/equipos")
-        self.assertIn("backend", api.last_text())
-        self.assertNotIn("landing", api.last_text())
-        self.assertIn("T:backend", api.last_kb())
+        text, kb = api.last_text(), api.last_kb()
+        self.assertIn("backend · seguridad", text)
+        self.assertNotIn("landing", text)
+        self.assertIn("T:" + COORD, kb)
+        self.assertIn("T:" + SEC, kb)
 
     def test_team_view_shows_members_quota_and_actions(self):
         bot, api, _ = make_bot()
-        bot.on_callback("T:backend", 7)
+        bot.on_callback("T:" + COORD, 7)
         text, kb = api.last_text(), api.last_kb()
         self.assertIn("prama-agy-backend", text)
         self.assertIn("5h 93%", text)
         self.assertIn("✉ 2", text)
         self.assertIn("t:" + COORD, kb)
-        self.assertIn("tx:backend", kb)
-        self.assertIn("ta:backend:agy", kb)
+        self.assertIn("tx:" + COORD, kb)
+        self.assertIn("ta:%s:agy" % COORD, kb)
 
-    def test_create_team_selects_coordinator_for_the_objective(self):
-        bot, api, prama = make_bot(fleet=[])
-        bot.on_callback("wn:landing:agy:2", 7)
-        self.assertIn(["swarm", "landing", "--workers", "agy:2", "--no-open"], prama.ran)
-        self.assertEqual(bot.selected, "prama-coordinator-claude-landing")
+    def test_new_team_offers_existing_and_new_names(self):
+        bot, api, _ = make_bot()
+        bot.on_callback("wz:backend", 7)
+        kb = api.last_kb()
+        self.assertIn("wn:backend:principal", kb)        # existing: add agents
+        self.assertIn("wn:backend:seguridad", kb)
+        self.assertIn("wn:backend:docs", kb)             # suggestion: new team
+        self.assertIn("wo:backend", kb)                  # type another name
+
+    def test_create_named_team_selects_its_coordinator(self):
+        bot, api, prama = make_bot()
+        bot.on_callback("wg:backend:docs:agy:2", 7)
+        self.assertIn(["swarm", "backend", "--team", "docs", "--workers", "agy:2", "--no-open"], prama.ran)
+        self.assertEqual(bot.selected, "prama-backend-docs-coord")
         self.assertIn("objetivo", api.last_text())
+
+    def test_typed_team_name(self):
+        bot, api, prama = make_bot()
+        bot.on_callback("wo:backend", 7)
+        bot.on_text("Pagos Web")
+        self.assertIn("wg:backend:pagos-web:agy:1", api.last_kb())
+        bot.on_callback("wo:backend", 7)
+        bot.on_text("../etc")
+        self.assertIn("inválido", api.last_text())
+        self.assertFalse([a for a in prama.ran if a[0] == "swarm"])
 
     def test_add_worker_to_existing_team(self):
         bot, api, prama = make_bot()
-        bot.on_callback("ta:backend:agy", 7)
-        self.assertIn(["swarm", "backend", "--workers", "agy:1", "--no-open"], prama.ran)
+        bot.on_callback("ta:%s:agy" % SEC, 7)
+        self.assertIn(["swarm", "backend", "--team", "seguridad", "--workers", "agy:1", "--no-open"], prama.ran)
         self.assertIn("sumado", api.last_text())
 
     def test_team_input_is_validated(self):
         bot, api, prama = make_bot()
-        for data in ("wn:nope:agy:1", "wn:backend:rm -rf:1", "wn:backend:agy:9", "wn:backend:agy"):
+        for data in ("wg:nope:docs:agy:1", "wg:backend:docs:rm -rf:1", "wg:backend:docs:agy:9",
+                     "wg:backend:Bad Name:agy:1", "wg:backend:docs:agy"):
             bot.on_callback(data, 7)
             self.assertIn("⚠️", api.last_text(), data)
         self.assertFalse([a for a in prama.ran if a[0] == "swarm"])
 
-    def test_close_team_asks_first(self):
+    def test_close_one_team_asks_first_and_keeps_the_others(self):
         bot, api, prama = make_bot()
         bot.selected = "prama-agy-backend"
-        bot.on_callback("tx:backend", 7)
+        bot.on_callback("tx:" + COORD, 7)
         self.assertIn("¿Cerrar el equipo", api.last_text())
         self.assertFalse([a for a in prama.ran if a[:2] == ["swarm", "stop"]])
-        bot.on_callback("TX:backend", 7)
-        self.assertIn(["swarm", "stop", "backend"], prama.ran)
+        bot.on_callback("TX:" + COORD, 7)
+        self.assertIn(["swarm", "stop", COORD], prama.ran)
         self.assertEqual(bot.selected, "")
+        self.assertIn("backend · seguridad", api.last_text())
 
     def test_quota_view_flags_agents_near_the_limit(self):
         bot, api, _ = make_bot()

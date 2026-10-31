@@ -4,6 +4,38 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [6.3.0] - 2026-10-31
+
+### Added
+- **Several teams per zone.** `swarm <zone> --team <name>` creates a team with its own coordinator,
+  objective and cockpit (architecture, security, docs… on the same repository); an existing name adds
+  workers to that team. `prama-agent teams` (also `swarm list`, `--json`) lists them;
+  `swarm stop <zone> --team <name> | --all | <coordinator>` and `cockpit <zone> --team <name>`. Named
+  teams get readable session names (`prama-backend-seguridad-coord`, `…-seguridad-agy`); the zone's
+  first team, `principal`, keeps the classic names. The menu's new-team wizard asks for the team name;
+  Telegram lists every team and offers existing, suggested or typed names.
+- **First steps for new users.** `prama-agent setup` (re-runnable; `--check` only reports): dependencies,
+  each agent's sign-in, zones, default permissions, phone options. `prama-agent login [agent]` shows
+  whether each CLI is signed in and opens its own login (credentials stay with the CLI).
+  `prama-agent zones add|remove|scan` registers working folders under short names in `zones.conf`
+  (data, never sourced), next to the zones of `config.env`. The installer and the empty menu point to
+  `setup`. New guide: [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) (also in Spanish).
+- `fleet status --json` includes each agent's `team`.
+
+### Changed
+- `swarm <zone>` without `--team` no longer joins an existing team silently: it creates the zone's
+  `principal` team, or asks for a name when the zone already has teams.
+- Teams are isolated: an agent's reports (`bus report`) and the watchdog's alerts go to its own
+  coordinator; `bus assign <role>` prefers the sender's own agents, then its team, then its zone; with
+  `PRAMA_FLEET_SCOPE=zone` a coordinator cannot manage, grow or stop another team's agents.
+
+### Fixed
+- `bus report` delivered to the most recently started coordinator anywhere on the server (even another
+  zone's); it now goes to the reporter's own coordinator.
+- A cockpit built while other cockpits were open could come out tiny on tmux 3.2 ("no space for new
+  pane"): it is now built at a fixed size and then follows the attached client.
+- `main` is protected (pull requests with green CI); Discussions are enabled for questions.
+
 ## [6.2.0] - 2026-10-31
 
 ### Added

@@ -3,3 +3,6 @@ contact_links:
   - name: Security vulnerability / Vulnerabilidad de seguridad
     url: https://github.com/JSNN15/prama-agente/security/advisories/new
     about: Report it privately, never in a public issue. / Repórtala en privado, nunca en un issue público.
+  - name: Question or idea / Pregunta o idea
+    url: https://github.com/JSNN15/prama-agente/discussions
+    about: Usage questions and open-ended ideas. / Dudas de uso e ideas abiertas.

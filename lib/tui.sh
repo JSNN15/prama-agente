@@ -1045,6 +1045,7 @@ _tui_empty_lines() {
     msg=("$C_MUTED○$T_OFF  ${T_BOLD}Sin agentes activos$T_OFF" ""
          "$kb un agente  ·  $ks un equipo"
          "${C_MUTED}Siguen vivos aunque cierres la terminal$T_OFF")
+    (( ZONES_DISCOVERED )) && msg+=("" "${C_MUTED}Primera vez: ${T_OFF}prama-agent setup")
   fi
   if (( vh < ${#msg[@]} )); then
     local -a keep=()
@@ -1142,8 +1143,10 @@ _tui_action_body() {
       ;;
     swarm)
       _tui_para "Lanza un coordinador y varios agentes ejecutores en una zona. El coordinador recibe la lista de su equipo y tu objetivo, delega por el bus y puede sumar, cambiar de modelo o cerrar agentes."
-      BODY+=("" "  $K•$O Zona → agente ejecutor → cuántos → objetivo" "  $K•$O Se abre el cockpit del equipo al terminar"
-             "  $K•$O Si la zona ya tiene coordinador, los nuevos se suman" "" "Pulsa $K↵$O para crear el equipo.")
+      BODY+=("" "  $K•$O Zona → nombre del equipo → agente → cuántos → objetivo"
+             "  $K•$O Varios equipos por zona: arquitectura, seguridad, docs…"
+             "  $K•$O Un nombre que ya existe suma agentes a ese equipo"
+             "  $K•$O Se abre el cockpit del equipo al terminar" "" "Pulsa $K↵$O para crear el equipo.")
       ;;
     cockpit)
       _tui_para "Pantalla dividida con el equipo de una zona: coordinador a la izquierda, agentes a la derecha y el bus en vivo. Se actualiza solo cuando entran o salen agentes."
@@ -1371,15 +1374,16 @@ _tui_session_action() {
         tui_collect 0
       fi ;;
     x)
-      # A coordinator with agents: one confirmation closes the whole team (and its cockpit).
-      local zone members=0 m
+      # A coordinator with agents: one confirmation closes its whole team (and its cockpit);
+      # other teams of the same zone keep working.
+      local label members=0 m
       if [ "$(session_role "$s")" = coordinator ]; then
-        zone=$(state_get "$s" ZONE)
+        label=$(team_label "$s")
         while IFS= read -r m; do [ "$(state_get "$m" PARENT)" = "$s" ] && (( members++ )); done < <(prama_sessions)
         if (( members )); then
-          if tui_confirm "¿Cerrar el equipo de «$zone»? Se detienen el coordinador y sus $members agente(s)." 1 "Cerrar equipo"; then
-            if ( _swarm_stop "$zone" ) >/dev/null 2>&1; then tui_toast ok "Equipo de $zone cerrado ($(( members + 1 )) agentes)"
-            else tui_toast err "No se pudo cerrar el equipo de $zone"; fi
+          if tui_confirm "¿Cerrar el equipo «$label»? Se detienen el coordinador y sus $members agente(s)." 1 "Cerrar equipo"; then
+            if ( _swarm_stop "$s" ) >/dev/null 2>&1; then tui_toast ok "Equipo $label cerrado ($(( members + 1 )) agentes)"
+            else tui_toast err "No se pudo cerrar el equipo $label"; fi
             TUI_ROLE_CACHE=() TUI_MCACHE=()
             tui_collect 0
           fi
@@ -1398,52 +1402,77 @@ _tui_session_action() {
 
 # Cockpit of the selected session's zone; without a selection, pick among zones with agents.
 _tui_cockpit() {
-  local s=${1:-} zone='' z
-  local -a zs=() CK_LABELS=() CK_METAS=() CK_AVAIL=() CK_TARGETS=()
-  [ -n "$s" ] && zone=$(state_get "$s" ZONE)
-  if [ -z "$zone" ]; then
-    local -A cnt=()
-    while IFS='|' read -r _ _ z; do
+  local s=${1:-} z c
+  local -a CK_LABELS=() CK_METAS=() CK_AVAIL=() CK_TARGETS=() scopes=()
+  if [ -n "$s" ]; then
+    scopes=("$s")
+  else
+    # One entry per team, plus zones whose agents have no coordinator.
+    local -A cnt=() teamed=()
+    local -a zs=()
+    while IFS='|' read -r c _ z; do
       [ -n "${cnt[$z]+x}" ] || zs+=("$z")
       cnt[$z]=$(( ${cnt[$z]:-0} + 1 ))
     done < <(prama_team_order)
     if (( ${#zs[@]} == 0 )); then tui_toast info "No hay agentes: crea un equipo (❖ Nuevo equipo)"; return 0; fi
-    if (( ${#zs[@]} == 1 )); then zone=${zs[0]}
-    else
-      for z in "${zs[@]}"; do
-        CK_LABELS+=("$z") CK_METAS+=("${cnt[$z]} agente(s)$(zone_coordinator "$z" >/dev/null && printf ' · con coordinador')")
-        CK_AVAIL+=(1) CK_TARGETS+=("")
-      done
+    for z in "${zs[@]}"; do
+      while IFS= read -r c; do
+        local n=0 m
+        while IFS= read -r m; do [ "$(state_get "$m" PARENT)" = "$c" ] && (( n++ )); done < <(prama_sessions)
+        CK_LABELS+=("$(team_label "$c")") CK_METAS+=("coordinador + $n agente(s)") CK_AVAIL+=(1) CK_TARGETS+=("")
+        scopes+=("$c"); teamed[$z]=1
+      done < <(zone_teams "$z")
+      if [ -z "${teamed[$z]:-}" ]; then
+        CK_LABELS+=("$z") CK_METAS+=("${cnt[$z]} agente(s) sin coordinador") CK_AVAIL+=(1) CK_TARGETS+=("")
+        scopes+=("$z")
+      fi
+    done
+    if (( ${#scopes[@]} > 1 )); then
       TUI_LIST_CRUMBS="${C_MUTED}Menú$T_OFF $C_MUTED›$T_OFF ${T_BOLD}Cockpit$T_OFF"
       local rc=0; tui_list_run "¿Qué equipo quieres ver?" CK_LABELS CK_METAS CK_AVAIL CK_TARGETS 0 || rc=$?
       TUI_LIST_CRUMBS=''; tui_invalidate
       (( rc )) && return 0
-      zone=${zs[CHOICE]}
+      scopes=("${scopes[CHOICE]}")
     fi
   fi
-  if ! _tui_run_fullscreen 1 subcmd_cockpit "$zone" ${s:+--focus "$s"}; then
-    tui_alert "No se pudo abrir el cockpit" "${TUI_LAST_ERR:-zona $zone}"
+  if ! _tui_run_fullscreen 1 subcmd_cockpit "${scopes[0]}"; then
+    tui_alert "No se pudo abrir el cockpit" "${TUI_LAST_ERR:-${scopes[0]}}"
   fi
   tui_collect 0
 }
 
-# tui_new_team — zone → worker agent → how many → objective, then `swarm` (opens the cockpit).
+# tui_new_team — zone → team → worker agent → how many → objective, then `swarm` (opens the
+# cockpit). A zone can hold several teams: an existing name adds agents to that team.
 tui_new_team() {
-  local step=1 rc i zone='' wa='' n=2 task='' coord=claude
+  local step=1 rc i zone='' team='' wa='' n=2 task='' coord=claude
   is_in claude "${AGENTS[@]}" && agent_installed claude || coord=${AGENTS[0]}
   TUI_GIT_CACHE=()
   _tui_agent_lists
   local -a NL=() NM=() NA=() NT=()
   for i in 1 2 3 4 5 6; do NL+=("$i"); NM+=("$i agente(s) ejecutor(es) + 1 coordinador ($coord)"); NA+=(1); NT+=(""); done
   while :; do
-    TUI_LIST_CRUMBS="${C_MUTED}Menú$T_OFF $C_MUTED›$T_OFF ${T_BOLD}Nuevo equipo$T_OFF $C_MUTED›$T_OFF ${zone:-zona}${wa:+ · $wa}"
+    TUI_LIST_CRUMBS="${C_MUTED}Menú$T_OFF $C_MUTED›$T_OFF ${T_BOLD}Nuevo equipo$T_OFF $C_MUTED›$T_OFF ${zone:-zona}${team:+ · $team}${wa:+ · $wa}"
     case $step in
       1) AGENT=$coord; _tui_zone_lists
          rc=0; tui_list_run "¿En qué zona trabajará el equipo?" ZN_LABELS ZN_METAS ZN_AVAIL ZN_TARGETS -1 || rc=$?
          (( rc )) && break
-         zone=${ZONES[CHOICE]}; step=2 ;;
+         zone=${ZONES[CHOICE]}; step=15 ;;
+      15) # Team: a new name creates a team with its own coordinator; an existing one adds agents.
+         local existing def=''
+         existing=$(_swarm_teams_hint "$zone")
+         [ -n "$existing" ] || def=$PRAMA_DEFAULT_TEAM
+         team=''
+         if ! tui_prompt "Nombre del equipo${existing:+ (en $zone: $existing; un nombre existente suma agentes)}" team "$def"; then
+           step=1; continue
+         fi
+         team=${team,,}; team=${team// /-}
+         if ! valid_team_name "$team"; then
+           tui_alert "Nombre de equipo inválido" "Usa minúsculas, números y guiones (máx. 20), p. ej. seguridad o docs."
+           continue
+         fi
+         step=2 ;;
       2) rc=0; tui_list_run "Agente para los ejecutores" AG_LABELS AG_METAS AG_AVAIL AG_TARGETS -1 || rc=$?
-         if (( rc )); then step=1; continue; fi
+         if (( rc )); then step=15; continue; fi
          wa=${AGENTS[CHOICE]}; step=3 ;;
       3) rc=0; tui_list_run "¿Cuántos ejecutores $wa?" NL NM NA NT 1 || rc=$?
          if (( rc )); then step=2; continue; fi
@@ -1451,7 +1480,7 @@ tui_new_team() {
       4) task=''
          tui_prompt "Objetivo para el coordinador (opcional)" task || task=''
          TUI_LIST_CRUMBS=''; tui_invalidate
-         if ! _tui_run_fullscreen 1 subcmd_swarm "$zone" --coord "$coord" --workers "$wa:$n" ${task:+--task "$task"}; then
+         if ! _tui_run_fullscreen 1 subcmd_swarm "$zone" --team "$team" --coord "$coord" --workers "$wa:$n" ${task:+--task "$task"}; then
            tui_alert "No se pudo crear el equipo" "${TUI_LAST_ERR:-revisa prama-agent doctor}"
          fi
          break ;;

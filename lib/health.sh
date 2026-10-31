@@ -284,9 +284,11 @@ watchdog_ensure() {
     ${XDG_CONFIG_HOME:+-e "XDG_CONFIG_HOME=$XDG_CONFIG_HOME"} "$cmd" 2>/dev/null || return 1
 }
 
-# Coordinators of a zone that should hear about problems of <session>.
+# Coordinators that should hear about problems of <session>: its own team's coordinator when it
+# has one (other teams of the zone are not told), otherwise the coordinators of its zone.
 _watch_coordinators() {
   local s=$1 zone c
+  if c=$(session_team "$s") && [ "$c" != "$s" ]; then printf '%s\n' "$c"; return 0; fi
   zone=$(state_get "$s" ZONE)
   while IFS= read -r c; do
     [ "$c" = "$s" ] && continue

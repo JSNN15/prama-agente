@@ -93,8 +93,30 @@ prama_load_config() {
   PRAMA_TMUX_CONF="${PRAMA_TMUX_CONF:-$PRAMA_STATE_HOME/tmux.conf}"
 }
 
+# zones.conf: zones registered with `prama-agent zones add` (or `setup`), one "name|dir|description"
+# line each. It is data, never sourced; zones from config.env come first and win on a name clash.
+ZONE_NAME_RE='^[a-z0-9][a-z0-9_-]{0,23}$'
+valid_zone_name() { [[ "${1:-}" =~ $ZONE_NAME_RE ]]; }
+zones_file() { printf '%s/zones.conf' "$PRAMA_CONFIG_HOME"; }
+
+load_zones_file() {
+  local f name dir desc
+  f=$(zones_file)
+  [ -f "$f" ] || return 0
+  while (( ${#ZONE_DESCS[@]} < ${#ZONES[@]} )); do ZONE_DESCS+=(""); done
+  while IFS='|' read -r name dir desc; do
+    valid_zone_name "$name" && [ -n "$dir" ] || continue
+    is_in "$name" "${ZONES[@]}" && continue
+    ZONES+=("$name") ZONE_DIRS+=("$dir") ZONE_DESCS+=("${desc:-$dir}")
+  done < "$f"
+}
+
+# Without any registered zone, every git repository directly under PRAMA_DISCOVER_ROOTS is one
+# (ZONES_DISCOVERED=1). Registering a zone turns discovery off: the list is then yours.
+ZONES_DISCOVERED=0
 discover_zones() {
   [ "${#ZONES[@]}" -gt 0 ] && return 0
+  ZONES_DISCOVERED=1
   local root d
   for root in $PRAMA_DISCOVER_ROOTS; do
     [ -d "$root" ] || continue
@@ -116,6 +138,7 @@ discover_zones() {
 prama_init() {
   prama_load_config
   _filter_agents
+  load_zones_file
   discover_zones
   ensure_private_dir "$PRAMA_STATE_HOME"
   ensure_private_dir "$PRAMA_BUS_DIR"
@@ -287,6 +310,53 @@ prama_team_order() {
       printf '%s|0|%s\n' "$s" "$z"; used[$s]=1
     done
   done
+}
+
+# ── Teams ───────────────────────────────────────────────────────────────────
+# A team is a coordinator plus the sessions it launched (PARENT). A zone can hold several teams,
+# each with a name unique in the zone (TEAM on the coordinator and its members). Coordinators from
+# before named teams have no TEAM: they are the zone's "principal" team.
+TEAM_NAME_RE='^[a-z0-9][a-z0-9-]{0,19}$'
+PRAMA_DEFAULT_TEAM="${PRAMA_DEFAULT_TEAM:-principal}"
+
+valid_team_name() { [[ "${1:-}" =~ $TEAM_NAME_RE ]]; }
+
+# team_name <coordinator> → its team name
+team_name() { state_get "$1" TEAM "$PRAMA_DEFAULT_TEAM"; }
+
+# team_label <coordinator> → "backend" for the principal team, "backend · seguridad" otherwise
+team_label() {
+  local t z
+  t=$(team_name "$1") z=$(state_get "$1" ZONE)
+  if [ "$t" = "$PRAMA_DEFAULT_TEAM" ]; then printf '%s' "$z"; else printf '%s · %s' "$z" "$t"; fi
+}
+
+# session_team <session> → coordinator of the session's team (itself for a coordinator)
+session_team() {
+  local s=$1 p
+  [ "$(session_role "$s")" = coordinator ] && { printf '%s' "$s"; return 0; }
+  p=$(state_get "$s" PARENT)
+  [ -n "$p" ] && [ "$p" != operator ] && valid_session_name "$p" && tmx_has "$p" \
+    && [ "$(session_role "$p")" = coordinator ] && { printf '%s' "$p"; return 0; }
+  return 1
+}
+
+# zone_teams <zone> → coordinators of the zone, one per line
+zone_teams() {
+  local s
+  while IFS= read -r s; do
+    [ "$(session_role "$s")" = coordinator ] && [ "$(state_get "$s" ZONE)" = "$1" ] && printf '%s\n' "$s"
+  done < <(prama_sessions)
+  return 0
+}
+
+# find_team <zone> <team> → its coordinator
+find_team() {
+  local c
+  while IFS= read -r c; do
+    [ "$(team_name "$c")" = "$2" ] && { printf '%s' "$c"; return 0; }
+  done < <(zone_teams "$1")
+  return 1
 }
 
 # Attaches to a prama session from wherever we are:

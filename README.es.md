@@ -19,7 +19,7 @@ bloqueado por un login, una cuota o un problema de facturación.
 Es bash sobre un servidor tmux dedicado: sin daemon que instalar, sin base de datos, sin Node.js.
 
 ```
- ◆ PRAMA AGENT v6.2.0  server-01                   ● 3 activos · 1 trabajando   LOAD 1.63 · RAM 21%
+ ◆ PRAMA AGENT v6.3.0  server-01                   ● 3 activos · 1 trabajando   LOAD 1.63 · RAM 21%
  Próximo agente ›  o  Rol ✦ executor   y  Permisos ● ASK   e  Remoto off   p  Perfil default
 ╭─ Sesiones ───────────────────────────────── 3 ─╮╭─ ◉ prama-agy-backend ─────────────────────────╮
 │   ● claude-backend   ❖ coord listo   ▱▱▱▱   0% ││ ✦ executor · ● trabaja · CPU 3% · up 04:12    │
@@ -55,24 +55,27 @@ la conexión SSH. prama-agent las convierte en una flota supervisada:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agente/main/install.sh | sudo bash
-prama-agent doctor           # verifica dependencias, agentes, hooks y configuración
+prama-agent setup            # primeros pasos: sesión de los agentes, zonas (carpetas de trabajo), permisos
 ```
 
+¿Primera vez? **[Primeros pasos](docs/GETTING_STARTED.es.md)** va de un servidor vacío a varios
+equipos, incluyendo el inicio de sesión, los modelos y las zonas.
+
 Sin `sudo` se instala para tu usuario (`~/.local/bin`, `~/.config/prama-agent`). Desde un clon:
-`sudo make install` o `make install`. Para actualizar: `prama-agent update` (o `update v6.2.0`).
+`sudo make install` o `make install`. Para actualizar: `prama-agent update` (o `update v6.3.0`).
 Probado en Ubuntu 22.04 / 24.04 y Debian 12 (tmux 3.2a, 3.3a y 3.4), con cualquier shell de inicio.
 
 Requisitos: bash ≥ 4.4, tmux ≥ 3.2 (3.3+ para los botones táctiles de la barra y el modo celular), git. Recomendados:
 `jq` (hooks y telemetría de cuota), `fzf`, `less`. El puente opcional con Telegram necesita `python3`
-y `curl`. Al menos un CLI de agente: `claude` (Claude Code) o `agy` (Antigravity CLI). Por defecto, las
-zonas son los repositorios git que hay en `/opt` y `$HOME`; nómbralas en `config.env` si quieres alias
-cortos.
+y `curl`. Al menos un CLI de agente: `claude` (Claude Code) o `agy` (Antigravity CLI), con sesión iniciada: las
+credenciales las guarda cada CLI (`prama-agent login` muestra y abre su inicio de sesión; prama nunca
+las almacena).
 
 ## Uso rápido
 
 ```bash
 prama-agent                                   # interfaz interactiva
-prama-agent swarm backend --workers agy:3 --task "Agrega rate limiting a la API pública"
+prama-agent swarm backend --team api --workers agy:3 --task "Agrega rate limiting a la API pública"
                                               # coordinador + 3 agy, abre el cockpit del equipo
 prama-agent claude backend                    # lanza Claude Code en la zona "backend" y entra
 prama-agent agy web --bg -w feat/login        # en segundo plano, aislado en un git worktree
@@ -81,8 +84,10 @@ prama-agent status                            # resumen de la flota
 prama-agent attach prama-claude-backend       # volver a entrar (Alt+m regresa al menú)
 ```
 
-Una **zona** es un directorio de trabajo con nombre, normalmente un repositorio. Las zonas se definen en
-`config.env` o se descubren a partir de los repositorios git bajo `PRAMA_DISCOVER_ROOTS`.
+Una **zona** es una carpeta de trabajo con nombre, normalmente un repositorio:
+`prama-agent zones add backend /srv/api` (o `setup`); `zones scan` lista los repositorios aún sin
+registrar. Mientras no registres ninguna, cada repositorio git bajo `PRAMA_DISCOVER_ROOTS` (`/opt`,
+`$HOME`) es una zona.
 
 ### Interfaz interactiva
 
@@ -104,15 +109,23 @@ admite toques y rueda del ratón.
 ## Equipos y cockpit
 
 ```bash
-prama-agent swarm backend                         # coordinador (claude) + PRAMA_SWARM_WORKERS (agy:2)
-prama-agent swarm backend --workers agy:2,claude:1 --worker-model gemini-3.8-flash-high
-prama-agent cockpit backend                       # vista dividida del equipo en vivo
-prama-agent swarm stop backend                    # cierra el coordinador y sus agentes
+prama-agent swarm backend --team arquitectura --workers agy:2 --task "Separar el módulo de facturación"
+prama-agent swarm backend --team seguridad --workers agy:1,claude:1 --worker-model gemini-3.8-flash-high
+prama-agent swarm backend --team docs --workers agy:1 --task "Documentar la API pública"
+prama-agent teams                                 # todos los equipos: zona, nombre, coordinador, agentes, objetivo
+prama-agent cockpit backend --team seguridad      # vista dividida en vivo de un equipo
+prama-agent swarm stop backend --team docs        # cierra un equipo (coordinador y sus agentes)
 ```
 
+**Varios equipos por zona.** Cada equipo tiene un nombre único en su zona, su propio coordinador,
+objetivo y cockpit, y no se mezclan: los reportes y alertas de un agente van a su coordinador,
+`bus assign executor` desde un coordinador elige a uno de sus agentes, y un coordinador no puede
+gestionar, ampliar ni cerrar otro equipo. `swarm` con el nombre de un equipo existente le suma
+agentes; sin `--team` crea el equipo `principal` de la zona, o pide un nombre si la zona ya tiene
+equipos.
+
 El coordinador recibe la lista de su equipo y el objetivo apenas está listo, delega por el bus y puede
-hacer crecer el equipo él mismo (`swarm <su zona> --workers agy:2`), cambiar modelos o cerrar agentes.
-Si la zona ya tiene coordinador, los nuevos ejecutores se suman a su equipo.
+hacer crecer su equipo (`swarm <su zona> --workers agy:2`), cambiar modelos o cerrar agentes.
 
 El **cockpit** muestra al coordinador a la izquierda, sus agentes apilados a la derecha y el bus en vivo
 abajo; se reconstruye solo cuando entran o salen agentes. Dentro del tmux de prama, desde cualquier
@@ -242,10 +255,11 @@ prama-agent telegram start     # bot 24/7 en una sesión persistente (status | l
 Emparejamiento con código de un solo uso (solo tu chat y tu usuario quedan autorizados), menús con
 botones y argumentos validados contra listas blancas. Desde el bot puedes:
 
-- **Equipos** (`/equipos`): cada equipo con sus agentes, estado, modelo y cuota; *hablar al
-  coordinador* (lo que escribas después le llega a él), ver su pantalla, sumar un agente o cerrar el
-  equipo completo (con confirmación). *Nuevo equipo* pide la zona y los ejecutores (`agy × 1-3`, …) y
-  toma tu siguiente mensaje como objetivo.
+- **Equipos** (`/equipos`): todos los equipos, varios por zona, con sus agentes, estado, modelo y
+  cuota; *hablar al coordinador* (lo que escribas después le llega a él), ver su pantalla, sumar un
+  agente o cerrar ese equipo (con confirmación). *Nuevo equipo* pide la zona, el equipo (uno existente,
+  un nombre sugerido o el tuyo) y los ejecutores (`agy × 1-3`, …), y toma tu siguiente mensaje como
+  objetivo.
 - **Cuota** (`/cuota`): 5 h / 7 d / contexto por agente, marcada al 90 %.
 - **Agentes**: ver pantalla, hablar, lanzar, reiniciar o cerrar; **reportes de fallos** de los
   agentes (`/reportes`).
@@ -258,7 +272,7 @@ Los agentes usan prama todo el día, así que son los primeros en notar cuando a
 roles traen un canal interno para eso:
 
 ```bash
-prama-agent feedback "fleet model agy-backend-2 gemini-3.8-pro: reinició con el modelo anterior"   # agente o tú
+prama-agent feedback "fleet model agy-backend-2 gemini-4-argon-medium: reinició con el modelo anterior"   # agente o tú
 prama-agent feedback list                  # reportes abiertos (también en doctor, el menú y Telegram /reportes)
 prama-agent feedback show <id>             # reporte y contexto: versión, agente, modelo, estado, últimos eventos
 prama-agent feedback export <id> | gh issue create -R JSNN15/prama-agente -t "…" -F -

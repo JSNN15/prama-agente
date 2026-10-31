@@ -5,7 +5,7 @@
 
 set -u
 
-VERSION="6.2.0"
+VERSION="6.3.0"
 
 # Status line fast path: agy redraws it several times per second, so the last line is reused
 # for PRAMA_SL_MIN seconds with bash builtins only (no forks, before anything else runs).
@@ -66,7 +66,7 @@ if [ "${1:-}" = "--internal-statusline" ]; then
   exit 0
 fi
 
-for _m in core ui agents roles bus swarm health fleet feedback telegram tui; do
+for _m in core ui agents roles bus swarm health fleet feedback setup telegram tui; do
   # shellcheck source=/dev/null
   source "$LIB_DIR/$_m.sh"
 done
@@ -102,6 +102,11 @@ usage() {
   cat <<EOF
 ${C_BOLD}prama-agent v$VERSION${C_OFF} — control plane para agentes de código en terminal
 
+${C_BOLD}PRIMEROS PASOS${C_OFF}
+  setup                  Asistente: agentes y sesión, zonas, permisos (repetible; --check solo revisa)
+  login [agente]         Estado de sesión de cada agente / iniciar sesión (claude, agy)
+  zones [add <nombre> <carpeta> | remove <nombre> | scan]   Carpetas de trabajo con nombre corto
+
 ${C_BOLD}USO${C_OFF}
   prama-agent                          Abre la interfaz interactiva
   prama-agent <agente> <zona> [opc.] [-- args del agente]
@@ -136,13 +141,14 @@ ${C_BOLD}FLOTA${C_OFF}  (lo que usa el coordinador para administrar agentes)
   fleet presets | models [agente] | watchdog [status|start|stop|logs] | hooks [status|install|uninstall]
 
 ${C_BOLD}EQUIPOS${C_OFF}
-  swarm <zona> [--workers agy:3] [--coord claude] [--task "objetivo"]   Coordinador + N agentes
-  swarm stop <zona>      Cerrar el equipo          cockpit [zona|sesión]  Ver el equipo en vivo
+  swarm <zona> --team <nombre> [--workers agy:3] [--task "objetivo"]   Coordinador + N agentes
+  teams                  Equipos activos (varios por zona: arquitectura, seguridad, docs…)
+  swarm stop <zona> [--team <nombre>|--all]      cockpit [zona|sesión] [--team <nombre>]
   bus status|assign|report|inbox|broadcast|watch|clear|help            Mensajes entre agentes
   Dentro de tmux: $PRAMA_MENU_KEY menú · $PRAMA_NAV_KEY lista de agentes · $PRAMA_COCKPIT_KEY cockpit ⇄ agente · Ctrl+b n/p siguiente
 
 ${C_BOLD}SISTEMA${C_OFF}
-  worktree list|create|remove|prune   profiles   mcp   zones|agents [--json]
+  worktree list|create|remove|prune   profiles   mcp   agents [--json]
   telegram setup|start|stop|restart|status|logs|test|notify   doctor [--restore-tmux-conf]
   feedback "<fallo>" | list | show <id> | export <id> | close <id>   Reportes de fallos de prama (agentes)
   completion bash        Autocompletado           info  Guía rápida           update [versión]  Actualizar
@@ -272,21 +278,6 @@ subcmd_sessions() {
   done <<< "$panes"
   (( json )) && printf ']\n'
   return 0
-}
-
-subcmd_zones() {
-  local i
-  if [ "${1:-}" = "--json" ]; then
-    printf '['
-    for i in "${!ZONES[@]}"; do
-      (( i )) && printf ','
-      printf '{"name":"%s","dir":"%s","exists":%s}' "$(json_escape "${ZONES[$i]}")" "$(json_escape "${ZONE_DIRS[$i]}")" \
-        "$([ -d "${ZONE_DIRS[$i]}" ] && echo true || echo false)"
-    done
-    printf ']\n'
-  else
-    for i in "${!ZONES[@]}"; do printf '%-16s %s\n' "${ZONES[$i]}" "${ZONE_DIRS[$i]}"; done
-  fi
 }
 
 subcmd_agents() {
@@ -602,7 +593,7 @@ subcmd_completion() {
 # prama-agent bash completion — add to ~/.bashrc:  eval "$(prama-agent completion bash)"
 _prama_agent() {
   local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]} first=${COMP_WORDS[1]:-}
-  local subs="status ls sessions attach logs capture send restart stop fleet swarm bus cockpit fzf worktree profiles mcp zones agents telegram feedback doctor update completion info help"
+  local subs="status ls sessions attach logs capture send restart stop fleet swarm teams bus cockpit fzf worktree profiles mcp zones agents telegram feedback setup login doctor update completion info help"
   case "$prev" in
     --role|-O) COMPREPLY=($(compgen -W "executor coordinator reader daemon" -- "$cur")); return ;;
     --profile|-P) COMPREPLY=($(compgen -W "default openrouter deepseek glm local" -- "$cur")); return ;;
@@ -621,11 +612,13 @@ _prama_agent() {
           spawn) COMPREPLY=($(compgen -W "${AGENTS[*]}" -- "$cur")) ;;
         esac
       fi; return ;;
-    swarm) COMPREPLY=($(compgen -W "stop help --workers --coord --task --model --worker-model --no-open $(prama-agent zones 2>/dev/null | awk '{print $1}')" -- "$cur")); return ;;
+    swarm) COMPREPLY=($(compgen -W "list stop help --team --all --workers --coord --task --model --worker-model --no-open $(prama-agent zones 2>/dev/null | awk '{print $1}')" -- "$cur")); return ;;
     cockpit) COMPREPLY=($(compgen -W "$(prama-agent zones 2>/dev/null | awk '{print $1}') $(prama-agent sessions 2>/dev/null)" -- "$cur")); return ;;
     telegram) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "setup start stop restart status logs test notify" -- "$cur")); return ;;
     worktree) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "list create remove prune" -- "$cur")); return ;;
     feedback|bug) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "list show export close help" -- "$cur")); return ;;
+    zones) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "list add remove scan help" -- "$cur")); return ;;
+    login) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "${AGENTS[*]}" -- "$cur")); return ;;
   esac
   if [ "$COMP_CWORD" -eq 1 ]; then
     COMPREPLY=($(compgen -W "$subs $(prama-agent agents 2>/dev/null | awk '{print $1}')" -- "$cur"))
@@ -660,10 +653,13 @@ if [ $# -gt 0 ]; then
   case $1 in
     status|ls|ps)          subcmd_status; exit 0 ;;
     sessions)              shift; subcmd_sessions "$@"; exit 0 ;;
-    zones)                 shift; subcmd_zones "$@"; exit 0 ;;
+    zones)                 shift; subcmd_zones "$@"; exit $? ;;
+    setup|init)            shift; subcmd_setup "$@"; exit $? ;;
+    login|auth)            shift; subcmd_login "$@"; exit $? ;;
     agents)                shift; subcmd_agents "$@"; exit 0 ;;
     cockpit|ui|team)       shift; subcmd_cockpit "$@"; exit $? ;;
     swarm|equipo)          shift; subcmd_swarm "$@"; exit $? ;;
+    teams|equipos)         shift; _swarm_list "$@"; exit $? ;;
     fzf|find)              launch_fzf_cockpit; exit $? ;;
     bus)                   shift; subcmd_bus "$@"; exit $? ;;
     fleet)                 shift; subcmd_fleet "$@"; exit $? ;;

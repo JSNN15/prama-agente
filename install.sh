@@ -87,4 +87,4 @@ for a in claude agy; do command -v "$a" >/dev/null 2>&1 && agents+=("$a"); done
 [ ${#agents[@]} -gt 0 ] || note "No se encontró ningún agente: instala Claude Code (claude) o Antigravity CLI (agy)."
 
 say "prama-agent v$VERSION instalado."
-printf '\n   prama-agent doctor          verifica el entorno\n   prama-agent                 abre la interfaz\n   prama-agent update          actualiza a la última versión\n\n'
+printf '\n   prama-agent setup           primeros pasos: sesión de los agentes, zonas y permisos\n   prama-agent                 abre la interfaz\n   prama-agent doctor          diagnóstico completo · prama-agent update  actualizar\n\n'

@@ -425,9 +425,14 @@ launch_agent() {
   fi
   tmx new-session -d -s "$name" -x "${COLS:-120}" -y 40 -c "$target_d" "${tmux_env[@]}" "${runner_s% }" \
     || { warn "tmux no pudo crear la sesión '$name'."; return 1; }
-  state_write "$name" ROLE="$role" AGENT="$agent" ZONE="$zone" PROFILE="$profile" PERM="$perm" \
+  # Team: given for a coordinator (PRAMA_TEAM), inherited from the coordinator that launches an agent.
+  local team=${PRAMA_TEAM:-} parent=${PRAMA_PARENT:-${PRAMA_SESSION:-operator}}
+  if [ -z "$team" ] && [ "$parent" != operator ] && [ "$(session_role "$parent")" = coordinator ]; then
+    team=$(team_name "$parent")
+  fi
+  state_write "$name" ROLE="$role" AGENT="$agent" ZONE="$zone" PROFILE="$profile" PERM="$perm" ${team:+TEAM="$team"} \
     REMOTE="$remote" MODEL="$AGENT_MODEL" EFFORT="$AGENT_EFFORT" PRESET="$PRESET" WORKTREE="$wt" \
-    SESSION_ID="$sid" PARENT="${PRAMA_PARENT:-${PRAMA_SESSION:-operator}}" TARGET_DIR="$target_d" STARTED_AT="$(date -Iseconds)"
+    SESSION_ID="$sid" PARENT="$parent" TARGET_DIR="$target_d" STARTED_AT="$(date -Iseconds)"
   if (( ${#PASS[@]} )); then printf '%s\0' "${PASS[@]}" > "$(state_args_file "$name")"; fi
   bus_event started "${PRAMA_SESSION:-operator}" "$name" "$agent@$zone ($role, $perm${AGENT_MODEL:+, $AGENT_MODEL}${PRESET:+, preset $PRESET})"
   watchdog_ensure || true

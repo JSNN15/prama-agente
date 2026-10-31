@@ -17,11 +17,12 @@ Internal design reference for contributors (English only). User documentation:
 | `lib/health.sh` | CLI hooks (claude, agy) → health file, status line → quota file, `BLOCKED`/quota alerts, fleet watchdog, queued delivery |
 | `lib/fleet.sh` | `prama-agent fleet …`: spawn/kill/model/edit/restart with guard rails |
 | `lib/feedback.sh` | `prama-agent feedback …`: bug reports from agents and the operator (local, redacted, deduplicated) |
+| `lib/setup.sh` | First steps: `setup` wizard, `login` (agent sign-in status), `zones add/remove/scan` (`zones.conf`) |
 | `lib/telegram.sh` + `lib/telegram_bot.py` | Telegram bridge |
 | `lib/tui.sh` | Interactive full-screen TUI |
 
 Source order: `core.sh` → `ui.sh` → `agents.sh` → `roles.sh` → `bus.sh` → `swarm.sh` → `health.sh` → `fleet.sh` →
-`feedback.sh` → `telegram.sh` → `tui.sh`. `--internal-hook` and `--internal-statusline` are fast paths that only source
+`feedback.sh` → `setup.sh` → `telegram.sh` → `tui.sh`. `--internal-hook` and `--internal-statusline` are fast paths that only source
 `core.sh` + `health.sh`; outside prama panes the hook exits before sourcing anything (agy's hooks are
 global), and the status line reuses its last output for `PRAMA_SL_MIN` seconds using bash builtins only
 (agy redraws it several times per second).
@@ -57,6 +58,11 @@ creates private dirs).
     shell (`default-command`). Never assume the user's shell can parse a generated command line.
 13. **Agents never publish.** The feedback channel writes local reports only; turning one into a
     GitHub issue is an explicit operator step (`feedback export`). Agents cannot close reports.
+14. **Teams do not leak into each other.** Routing is by team, never "the most recent coordinator":
+    reports and alerts go to `session_team` (the reporter's coordinator), role targets rank the
+    sender's own agents first, and `_fleet_authorize` refuses another team's agents.
+15. **prama never handles agent credentials.** `login` asks each CLI (`claude auth status`, agy's token
+    file) and opens the CLI's own sign-in; `zones.conf` and every other prama file is data.
 
 ## core.sh API
 
@@ -132,8 +138,11 @@ The TUI reads core's process tables (`PS_COMM`, `PS_CHILDREN`, `PS_CPU`, `PS_RSS
   `agent_runtime_env` exports per-agent env inside the pane (opencode: `OPENCODE_CONFIG_CONTENT`, API keys).
 - `preset_load` / `preset_find` / `preset_names` / `preset_apply_defaults` — presets (`KEY=value`, never sourced).
 - `subcmd_bus`, `subcmd_swarm`, `subcmd_cockpit` / `cockpit_ensure <zone> [focus]`, `nav_main`, `subcmd_telegram`.
-- A team is not a separate object: the zone's coordinator plus the sessions whose `PARENT` is it.
-  `PRAMA_PARENT` overrides the parent recorded by `launch_agent`.
+- A team is not a separate object: a coordinator plus the sessions whose `PARENT` is it, named by
+  `TEAM` (unique in the zone; coordinators without it are the zone's `principal` team). Helpers in
+  `core.sh`: `team_name`, `team_label`, `session_team`, `zone_teams`, `find_team`. `launch_agent`
+  records `TEAM` from `PRAMA_TEAM` (coordinators) or from the launching coordinator (members);
+  `PRAMA_PARENT` overrides the parent. Cockpits are per team (`prama-cockpit-<zone>[-<team>]`).
 - Cockpit panes are nested tmux clients attached to the real agent sessions (viewers only): rebuilding
   the cockpit never touches an agent. Key bindings call back with `--internal-nav` and receive the
   socket and state dir explicitly, because tmux does not pass the client's environment to them.
@@ -148,6 +157,7 @@ The TUI reads core's process tables (`PS_COMM`, `PS_CHILDREN`, `PS_CPU`, `PS_RSS
 ## Machine-readable CLI (used by the Telegram bot and scripts)
 
 `fleet status --json`, `fleet spawn … --json`, `sessions --json`, `zones --json`, `agents --json`,
-`feedback list --json`, `swarm <zone> --workers A:N --no-open`, `swarm stop <zone>`,
+`feedback list --json`, `teams --json`, `zones --json`, `swarm <zone> --team T --workers A:N --no-open`,
+`swarm stop <coordinator>`,
 `capture <s> [N]`, `send <s> <text>`,
 `<agent> <zone> … --bg --porcelain` (prints only the session name).
