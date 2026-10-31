@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- `LICENSE` is now the canonical Apache License 2.0 text (the previous copy differed in one word and
+  lacked the appendix, so GitHub could not detect the license).
+
+### Added
+- Code of Conduct (Contributor Covenant 2.1).
+
 ## [6.3.0] - 2026-10-31
 
 ### Added
