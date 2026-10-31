@@ -435,7 +435,7 @@ out=$("$BIN" swarm alpha --workers agy:2 --task "ship /health" --no-open 2>&1)
 co=$("$BIN" fleet status --json | jq -r '.[] | select(.role=="coordinator" and .zone=="alpha") | .session')
 assert_eq "swarm launches one coordinator" "1" "$(grep -c . <<< "$co")"
 assert_eq "…and the requested workers, as its team" "2" "$("$BIN" fleet status --json | jq --arg c "$co" '[.[] | select(.parent==$c)] | length')"
-assert_contains "The coordinator gets its team brief (queued until ready)" "Tu equipo en 'alpha'" "$("$BIN" bus inbox "$co" 2>&1)"
+assert_contains "The coordinator gets its team brief (queued until ready)" "Tu equipo «principal» en 'alpha'" "$("$BIN" bus inbox "$co" 2>&1)"
 assert_true "…with the objective" "grep -q 'objetivo: ship /health' '$STATE/bus/events.jsonl'"
 assert_contains "fleet status shows the team as a tree" "└" "$("$BIN" fleet status)"
 "$BIN" cockpit alpha --no-attach >/dev/null 2>&1
@@ -470,6 +470,35 @@ out=$(PRAMA_SESSION=$co "$BIN" swarm beta --workers agy:1 2>&1); rc=$?
 assert_true "An agent cannot build a team outside its zone" "[ $rc -ne 0 ]"
 assert_contains "Navigation keys are bound on prama's tmux server" "--internal-nav pick" "$(cat "$STATE/tmux.conf")"
 assert_contains "…and the cockpit toggle" "--internal-nav cockpit" "$(cat "$STATE/tmux.conf")"
+# Several teams in one zone (architecture, security, docs…), each with its own coordinator.
+out=$("$BIN" swarm alpha --workers agy:1 --no-open 2>&1); rc=$?
+assert_true "A second team needs a name: never joins the first one silently" "[ $rc -ne 0 ]"
+assert_contains "…and the message says how" "--team" "$out"
+"$BIN" swarm alpha --team seguridad --workers agy:1 --task "audit auth" --no-open >/dev/null 2>&1
+sec=$("$BIN" teams --json | jq -r '.[] | select(.team=="seguridad") | .coordinator')
+assert_eq "A named team gets its own coordinator" "tp-alpha-seguridad-coord" "$sec"
+assert_eq "…and its own workers" "tp-alpha-seguridad-agy" "$("$BIN" teams --json | jq -r '.[] | select(.team=="seguridad") | .members[0]')"
+assert_eq "teams lists both teams of the zone" "2" "$("$BIN" teams --json | jq 'length')"
+assert_eq "…the first one is the zone's principal team" "$co" "$("$BIN" teams --json | jq -r '.[] | select(.team=="principal") | .coordinator')"
+assert_eq "The objective is kept on the coordinator" "audit auth" "$("$BIN" teams --json | jq -r '.[] | select(.team=="seguridad") | .objective')"
+out=$("$BIN" cockpit alpha --no-attach 2>&1); rc=$?
+assert_true "cockpit <zone> asks which team when there are several" "[ $rc -ne 0 ] && [[ \"\$out\" == *seguridad* ]]"
+"$BIN" cockpit alpha --team seguridad --no-attach >/dev/null 2>&1
+assert_eq "A team's cockpit shows only that team (+ bus)" "3" "$($P list-panes -t '=tp-cockpit-alpha-seguridad' 2>/dev/null | grep -c .)"
+PRAMA_SESSION=tp-alpha-seguridad-agy "$BIN" bus report "seguridad: 0 findings" >/dev/null 2>&1
+assert_eq "A worker's report goes to its own coordinator" "$sec" "$(jq -r 'select(.event=="report") | .to' "$STATE/bus/events.jsonl" | tail -n 1)"
+PRAMA_SESSION=$co "$BIN" bus assign executor "principal task" >/dev/null 2>&1
+dest=$(jq -r 'select(.text=="principal task") | .to' "$STATE/bus/events.jsonl" | tail -n 1)
+assert_eq "bus assign <role> from a coordinator picks one of its own agents" "$co" "$(jq -r --arg d "$dest" '.[] | select(.session==$d) | .parent' <<< "$("$BIN" fleet status --json)")"
+out=$(PRAMA_SESSION=$co "$BIN" fleet kill tp-alpha-seguridad-agy 2>&1); rc=$?
+assert_true "A coordinator cannot manage another team's agents" "[ $rc -ne 0 ] && [[ \"\$out\" == *otro\ equipo* ]]"
+out=$(PRAMA_SESSION=$co "$BIN" swarm alpha --team seguridad --workers agy:1 2>&1); rc=$?
+assert_true "…nor grow another team" "[ $rc -ne 0 ]"
+out=$("$BIN" swarm stop alpha 2>&1); rc=$?
+assert_true "swarm stop <zone> asks which team when there are several" "[ $rc -ne 0 ] && [[ \"\$out\" == *--team* ]]"
+"$BIN" swarm stop alpha --team seguridad >/dev/null 2>&1
+assert_true "swarm stop --team closes only that team" "! $P has-session -t =tp-alpha-seguridad-coord 2>/dev/null && $P has-session -t '=$co' 2>/dev/null"
+assert_true "…and its cockpit" "! $P has-session -t =tp-cockpit-alpha-seguridad 2>/dev/null"
 "$BIN" swarm stop alpha >/dev/null 2>&1
 assert_eq "swarm stop closes the coordinator and its team" "0" "$("$BIN" fleet status --json | jq '[.[] | select(.zone=="alpha")] | length')"
 assert_true "…and its cockpit" "! $P has-session -t =tp-cockpit-alpha 2>/dev/null"
@@ -496,6 +525,32 @@ assert_true "Agents cannot close reports" "[ $rc -ne 0 ]"
 assert_eq "The operator closes them" "0" "$("$BIN" feedback list --json | jq length)"
 assert_contains "Every agent learns how to report prama bugs" "prama-agent feedback" "$(bash -c 'source "'"$REPO_DIR"'/lib/core.sh"; source "'"$REPO_DIR"'/lib/roles.sh"; build_role_system_prompt executor s z')"
 "$BIN" stop --all -y >/dev/null 2>&1
+
+section "First steps: setup, login and zones"
+mkdir -p "$TMP_ROOT/repos/gamma"
+out=$("$BIN" zones add gamma "$TMP_ROOT/repos/gamma" "Gamma service" 2>&1)
+assert_contains "zones add registers a folder under a short name" "gamma" "$("$BIN" zones)"
+assert_eq "…in zones.conf, data only (name|dir|desc)" "gamma|$TMP_ROOT/repos/gamma|Gamma service" "$(cat "$HOME/.config/prama-agent/zones.conf")"
+assert_contains "…next to the zones of config.env" "alpha" "$("$BIN" zones)"
+assert_contains "A registered zone can be used right away" "tp-claude-gamma" "$("$BIN" claude gamma --dry-run 2>&1)"
+out=$("$BIN" zones add alpha "$TMP_ROOT/plain" 2>&1); rc=$?
+assert_true "A zone from config.env is not overwritten" "[ $rc -ne 0 ] && [[ \"\$out\" == *config.env* ]]"
+out=$("$BIN" zones add 'gam;ma' "$TMP_ROOT/plain" 2>&1); rc=$?
+assert_true "Zone names are validated" "[ $rc -ne 0 ]"
+printf 'evil|$(touch %s/pwned)|x\n' "$TMP_ROOT" >> "$HOME/.config/prama-agent/zones.conf"
+"$BIN" zones >/dev/null 2>&1
+assert_true "zones.conf is never executed" "[ ! -e '$TMP_ROOT/pwned' ]"
+"$BIN" zones remove evil >/dev/null 2>&1; "$BIN" zones remove gamma >/dev/null 2>&1
+assert_not_contains "zones remove" "gamma" "$("$BIN" zones)"
+out=$(MOCK_SLEEP=0 "$BIN" login 2>&1)
+assert_contains "login shows each agent's session (agy without a token)" "agy" "$out"
+assert_contains "…and how to sign in" "prama-agent login agy" "$out"
+mkdir -p "$HOME/.gemini/antigravity-cli" && echo tok > "$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
+assert_contains "…signed in once agy has its token" "sesión iniciada" "$(MOCK_SLEEP=0 "$BIN" login 2>&1 | grep agy)"
+rm -rf "$HOME/.gemini/antigravity-cli"
+out=$(MOCK_SLEEP=0 "$BIN" setup --check </dev/null 2>&1); rc=$?
+assert_true "setup --check runs without a terminal" "[ $rc -eq 0 ]"
+assert_contains "…and walks through agents, zones and permissions" "3 · Zonas" "$out"
 
 section "Installer"
 out=$(BASH_COMPLETION_USER_DIR="$TMP_ROOT/comp" PREFIX="$TMP_ROOT/inst" CONF_DIR="$TMP_ROOT/inst/etc" bash "$REPO_DIR/install.sh" 2>&1); rc=$?

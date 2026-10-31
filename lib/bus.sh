@@ -94,17 +94,33 @@ bus_can_inject() {
   esac
 }
 
-# Live session with the given role; the most recently started one wins (STARTED_AT).
+# Live session with the given role, closest to the sender first: an agent the sender launched,
+# then its own team, then its zone, then anyone; among equals the most recently started wins.
+# With several teams in a zone, "executor" from a coordinator never lands in another team.
 # Sets BUS_ROLE_BEST and BUS_ROLE_COUNT.
 _bus_find_role() {
-  local role=$1 s ts best_ts=''
+  local role=$1 sender=${2:-operator} s ts rank best_ts='' best_rank=-1 steam='' szone=''
   BUS_ROLE_BEST='' BUS_ROLE_COUNT=0
+  if [ "$sender" != operator ]; then
+    steam=$(session_team "$sender") || steam=''
+    szone=$(state_get "$sender" ZONE)
+  fi
   while IFS= read -r s; do
     valid_session_name "$s" || continue
+    [ "$s" = "$sender" ] && continue
     [ "$(session_role "$s")" = "$role" ] || continue
     (( BUS_ROLE_COUNT++ ))
+    rank=0
+    if [ "$sender" != operator ]; then
+      if [ "$(state_get "$s" PARENT)" = "$sender" ]; then rank=3
+      elif [ -n "$steam" ] && [ "$(session_team "$s" 2>/dev/null)" = "$steam" ]; then rank=2
+      elif [ -n "$szone" ] && [ "$(state_get "$s" ZONE)" = "$szone" ]; then rank=1
+      fi
+    fi
     ts=$(state_get "$s" STARTED_AT)
-    if [ -z "$BUS_ROLE_BEST" ] || [[ "$ts" > "$best_ts" ]]; then BUS_ROLE_BEST=$s; best_ts=$ts; fi
+    if (( rank > best_rank )) || { (( rank == best_rank )) && [[ "$ts" > "$best_ts" ]]; }; then
+      BUS_ROLE_BEST=$s best_ts=$ts best_rank=$rank
+    fi
   done < <(prama_sessions)
 }
 
@@ -122,7 +138,7 @@ resolve_bus_target() {
     return 0
   fi
   if is_in "$target" "${BUS_ROLES[@]}"; then
-    _bus_find_role "$target"
+    _bus_find_role "$target" "$(_bus_sender)"
     if [ -n "$BUS_ROLE_BEST" ]; then
       BUS_TARGET=$BUS_ROLE_BEST BUS_TARGET_KIND=role
       (( BUS_ROLE_COUNT > 1 )) && BUS_TARGET_NOTE="Hay $BUS_ROLE_COUNT sesiones con rol '$target'; se eligió la más reciente: $BUS_TARGET"
@@ -355,7 +371,12 @@ _bus_report() {
   [ -n "$msg" ] || die "Uso: prama-agent bus report \"<resumen del resultado>\""
   local sender coord=''
   sender=$(_bus_sender)
-  resolve_bus_target coordinator && [ "$BUS_TARGET_KIND" = role ] && coord=$BUS_TARGET
+  # The sender's own coordinator (its team); without a team, the closest coordinator.
+  if [ "$sender" != operator ] && coord=$(session_team "$sender") && [ "$coord" != "$sender" ]; then :
+  else
+    coord=''
+    resolve_bus_target coordinator && [ "$BUS_TARGET_KIND" = role ] && coord=$BUS_TARGET
+  fi
   bus_event report "$sender" "${coord:-coordinator}" "$msg"
   if [ -n "$coord" ] && [ "$coord" != "$sender" ]; then
     if bus_can_inject "$coord"; then

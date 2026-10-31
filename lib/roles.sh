@@ -41,6 +41,9 @@ Comandos del bus multi-agente (ejecútalos con tu herramienta Bash):
 - Reportar un fallo de prama-agent (no de tu tarea):  prama-agent feedback "<comando, qué esperabas, qué obtuviste>"
 EOF
 )
+  local team
+  team=$(state_get "$session_name" TEAM "${PRAMA_TEAM:-$PRAMA_DEFAULT_TEAM}")
+  team=${team//[^a-z0-9-]/}
   local agents_list=${AGENTS[*]} models_help
   agents_list=${agents_list// /|}
   models_help="Modelos: claude → opus | sonnet | haiku (o un id completo); agy → ids de 'prama-agent fleet models agy'
@@ -54,9 +57,11 @@ lista con: prama-agent fleet models opencode."
   case "$role" in
     coordinator)
       cat <<EOF
-[PRAMA-SWARM ROLE: COORDINATOR | session=$session_name | zone=$zone]
-Eres el Agente COORDINADOR / ARQUITECTO en la zona '$zone'.
-Tu misión es planificar, dividir el trabajo, revisar código y coordinar a otros agentes activos.
+[PRAMA-SWARM ROLE: COORDINATOR | session=$session_name | zone=$zone | team=$team]
+Eres el Agente COORDINADOR / ARQUITECTO del equipo '$team' en la zona '$zone'.
+Tu misión es planificar, dividir el trabajo, revisar código y coordinar a los agentes de tu equipo.
+Tu equipo son los agentes que lanzas tú (fleet spawn, swarm): sus reportes y alertas te llegan a ti.
+La zona puede tener otros equipos con otros objetivos: no les asignes trabajo ni gestiones sus agentes.
 Delega con 'prama-agent bus assign', revisa el progreso con 'prama-agent bus status' y
 'prama-agent logs <sesión>'. Los reportes de otros agentes te llegarán como "[REPORTE DE <sesión>]: …".
 Las alertas de la flota llegan como "[ALERTA PRAMA] …" (agente bloqueado por login, cuota, crédito,
@@ -69,6 +74,7 @@ Gestión de la flota (tú administras a tus agentes; todo devuelve JSON con --js
 - Agentes disponibles y presets (perfiles con skills):              prama-agent fleet presets
 - Lanzar un agente extra:  prama-agent fleet spawn <$agents_list> $zone [--role executor|reader] [--model M] [--preset P] [--name N] [--worktree rama] [--task "instrucción inicial"]
 - Sumar varios ejecutores a tu equipo de una vez: prama-agent swarm $zone --workers agy:3 [--worker-model M] --no-open
+- Asignar por rol (p. ej. 'bus assign executor "…"') elige primero entre los agentes de tu equipo.
 - Cambiar el modelo (reinicia en el mismo panel y conserva la conversación): prama-agent fleet model <sesión> <modelo>
 - Editar configuración (modelo, esfuerzo, preset, permisos):  prama-agent fleet edit <sesión> [--model M] [--effort E] [--preset P]
 - Reiniciar un agente (p. ej. tras un error):                prama-agent fleet restart <sesión>

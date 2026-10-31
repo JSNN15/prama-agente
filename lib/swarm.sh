@@ -4,14 +4,15 @@
 # Licensed under the Apache License, Version 2.0
 #
 # Public API:
-#   subcmd_swarm <zone> [opts] | stop <zone> | help     coordinator + N workers in one command
-#   subcmd_cockpit [zone|session] [--no-attach]         live split view of a zone's team
-#   cockpit_ensure <zone> [focus_session]               (re)builds the cockpit, prints its name
+#   subcmd_swarm <zone> [--team T] [opts] | list | stop <zone|coordinator> [--team T|--all] | help
+#   subcmd_cockpit [zone|session] [--team T] [--no-attach]   live split view of a team
+#   cockpit_ensure <zone> [focus_session] [coordinator]      (re)builds the cockpit, prints its name
 #   nav_main <pick|cockpit|next|prev|fit|click> <client> [session] [range]   tmux bindings and hooks
 #
-# A team is not a separate object: it is the coordinator of a zone plus the sessions whose
-# PARENT is that coordinator (see prama_team_order). Everything stays a normal prama session,
-# visible to the bus, the fleet API, the watchdog and Telegram.
+# A team is not a separate object: it is a coordinator plus the sessions whose PARENT it is, with
+# a name unique in its zone (TEAM; see the team helpers in core.sh). A zone can hold several teams
+# (architecture, security, docs…). Everything stays a normal prama session, visible to the bus,
+# the fleet API, the watchdog and Telegram.
 
 # _swarm_spec_parse "agy:2,claude" → SW_AGENTS=(agy agy claude)
 _swarm_spec_parse() {
@@ -33,27 +34,32 @@ _swarm_spec_parse() {
 # Exact zone name or a unique prefix ("b" → backend).
 match_zone() { match_one "$1" "${ZONES[@]}"; }
 
-# Coordinator of a zone, if one is running.
-zone_coordinator() {
-  local s
-  while IFS= read -r s; do
-    [ "$(session_role "$s")" = coordinator ] && [ "$(state_get "$s" ZONE)" = "$1" ] && { printf '%s' "$s"; return 0; }
-  done < <(prama_sessions)
-  return 1
+# First coordinator of a zone, if any (callers that need a specific team use find_team).
+zone_coordinator() { local c; c=$(zone_teams "$1" | head -n 1); [ -n "$c" ] && printf '%s' "$c"; }
+
+# _swarm_teams_hint <zone> → "arquitectura, seguridad" (team names of the zone)
+_swarm_teams_hint() {
+  local c out=''
+  while IFS= read -r c; do out+="${out:+, }$(team_name "$c")"; done < <(zone_teams "$1")
+  printf '%s' "$out"
 }
 
 _swarm_usage() {
   cat <<EOF
-Uso: prama-agent swarm <zona> [opciones]       coordinador + agentes ejecutores, en un paso
+Uso: prama-agent swarm <zona> [--team <nombre>] [opciones]   coordinador + agentes ejecutores, en un paso
+       --team <nombre>           equipo de la zona (p. ej. arquitectura, seguridad, docs). Si existe, los
+                                 ejecutores se suman a él; si no, se crea con su propio coordinador.
+                                 Sin --team: el equipo "$PRAMA_DEFAULT_TEAM" (o pide elegir si la zona ya tiene equipos)
        --coord <agente>          agente coordinador (por defecto: claude)
        --workers <spec>          ejecutores, p. ej. agy:3  o  agy:2,claude:1  (def. ${PRAMA_SWARM_WORKERS:-agy:2})
        --model <m>               modelo del coordinador
        --worker-model <m>        modelo de los ejecutores
        --task "<objetivo>"       objetivo inicial para el coordinador
        --no-open                 no abrir el cockpit al terminar
-     prama-agent swarm stop <zona>             cierra el equipo de la zona (coordinador y sus agentes)
+     prama-agent swarm list [--json]                         equipos activos (también: prama-agent teams)
+     prama-agent swarm stop <zona> [--team <nombre>|--all]   cierra un equipo (coordinador y sus agentes)
+     prama-agent swarm stop <sesión del coordinador>
 
-Si la zona ya tiene coordinador, los nuevos ejecutores se suman a su equipo.
 Navegación dentro de tmux: ${PRAMA_NAV_KEY:-M-a} agentes · ${PRAMA_COCKPIT_KEY:-M-c} cockpit · ${PRAMA_MENU_KEY:-M-m} menú.
 EOF
 }
@@ -61,16 +67,46 @@ EOF
 subcmd_swarm() {
   case "${1:-}" in
     ''|help|-h|--help) _swarm_usage ;;
+    list|ls)           shift; _swarm_list "$@" ;;
     stop|down)         shift; _swarm_stop "$@" ;;
     start|up)          shift; _swarm_start "$@" ;;
     *)                 _swarm_start "$@" ;;
   esac
 }
 
+# Teams: one line per coordinator, or JSON.
+_swarm_list() {
+  local json=0 c sep='' zone team n m members any=0 o
+  [ "${1:-}" = --json ] && json=1
+  (( json )) && printf '['
+  while IFS='|' read -r c _ zone; do
+    [ "$(session_role "$c")" = coordinator ] || continue
+    team=$(team_name "$c") n=0 members='' o=$(state_get "$c" OBJECTIVE)
+    while IFS= read -r m; do
+      [ "$(state_get "$m" PARENT)" = "$c" ] || continue
+      (( n++ )); members+="${members:+,}\"$(json_escape "$m")\""
+    done < <(prama_sessions)
+    if (( json )); then
+      printf '%s{"zone":"%s","team":"%s","coordinator":"%s","members":[%s],"objective":"%s"}' "$sep" \
+        "$(json_escape "$zone")" "$(json_escape "$team")" "$(json_escape "$c")" "$members" "$(json_escape "$o")"
+      sep=','
+    else
+      printf ' ❖ %-26s %-36s %d agente(s)%s\n' "$(team_label "$c")" "$c" "$n" "${o:+ · ${o:0:60}}"
+    fi
+    any=1
+  done < <(prama_team_order)
+  if (( json )); then printf ']\n'
+  elif (( ! any )); then info_msg "No hay equipos activos. Crea uno: prama-agent swarm <zona> --team <nombre>"
+  fi
+  return 0
+}
+
 _swarm_start() {
-  local zone='' coord_a=claude spec=${PRAMA_SWARM_WORKERS:-agy:2} cmodel='' wmodel='' task='' open=1 m
+  local zone='' team='' coord_a=claude spec=${PRAMA_SWARM_WORKERS:-agy:2} cmodel='' wmodel='' task='' open=1 m
   while (( $# )); do
     case "$1" in
+      --team|-T)         team=${2:?--team requiere un nombre}; shift 2
+                         valid_team_name "$team" || die "Nombre de equipo inválido: '$team' (minúsculas, números y -, máx. 20)" ;;
       --coord|-c)        coord_a=${2:?--coord requiere un agente}; shift 2 ;;
       --workers|-w)      spec=${2:?--workers requiere agente:cantidad}; shift 2 ;;
       --model|-m)        cmodel=${2:?}; valid_model "$cmodel" || die "Modelo inválido: '$cmodel'"; shift 2 ;;
@@ -89,70 +125,125 @@ _swarm_start() {
   is_in "$coord_a" "${AGENTS[@]}" && agent_installed "$coord_a" || die "Coordinador no disponible: '$coord_a'"
   _swarm_spec_parse "$spec"
 
-  local live
+  local live cs='' need=${#SW_AGENTS[@]}
   live=$(prama_sessions | grep -c . || true)
-  local cs need=${#SW_AGENTS[@]}
-  cs=$(zone_coordinator "$zone") || need=$(( need + 1 ))
-  # Called by an agent (a coordinator growing its team): same guard rails as `fleet spawn`.
   if [ -n "${PRAMA_SESSION:-}" ]; then
+    # Called by an agent (a coordinator growing its own team): same guard rails as `fleet spawn`.
     local own; own=$(state_get "$PRAMA_SESSION" ZONE)
     [ "${PRAMA_FLEET_SCOPE:-zone}" = all ] || [ -z "$own" ] || [ "$own" = "$zone" ] \
       || die "Solo puedes formar equipos en tu zona ($own)."
-    [ -n "$cs" ] || die "Un agente no puede crear un coordinador; pide al operador: prama-agent swarm $zone"
+    cs=$(session_team "$PRAMA_SESSION") \
+      || die "Un agente no puede crear un coordinador; pide al operador: prama-agent swarm $zone --team <nombre>"
+    [ -z "$team" ] || [ "$team" = "$(team_name "$cs")" ] || die "Solo puedes sumar agentes a tu propio equipo ($(team_name "$cs"))."
+    team=$(team_name "$cs")
     open=0
+  elif [ -n "$team" ]; then
+    cs=$(find_team "$zone" "$team") || cs=''
+  else
+    # No --team: the zone's principal team when it has none yet; never join a team silently.
+    local existing; existing=$(_swarm_teams_hint "$zone")
+    if [ -n "$existing" ]; then
+      die "La zona '$zone' ya tiene equipo(s): $existing. Para sumarle agentes: --team <nombre>; para uno nuevo: --team <otro nombre> (p. ej. seguridad, docs)."
+    fi
+    team=$PRAMA_DEFAULT_TEAM
   fi
+  [ -n "$cs" ] || need=$(( need + 1 ))
   (( live + need <= ${PRAMA_FLEET_MAX:-8} )) \
     || die "El equipo necesita $need sesiones y hay $live de ${PRAMA_FLEET_MAX:-8} (PRAMA_FLEET_MAX)."
 
+  # Session names: the principal team keeps the classic names; other teams carry their name
+  # (prama-backend-seguridad-coord, prama-backend-seguridad-agy, …-agy-2).
+  local base=''
+  [ "$team" = "$PRAMA_DEFAULT_TEAM" ] || base=$(slugify "${PRAMA_SESSION_PREFIX}-$zone-$team")
   if [ -z "$cs" ]; then
-    cs=$("$SELF_PATH" "$coord_a" "$zone" --role coordinator --bg --porcelain ${cmodel:+--model "$cmodel"}) \
-      || die "No se pudo lanzar el coordinador."
-    ok "Coordinador: $cs ($coord_a)"
+    cs=$(PRAMA_TEAM=$team "$SELF_PATH" "$coord_a" "$zone" --role coordinator --bg --porcelain ${base:+--name "$base-coord"} \
+           ${cmodel:+--model "$cmodel"}) || die "No se pudo lanzar el coordinador."
+    [ -n "$task" ] && state_set "$cs" OBJECTIVE="$task"
+    ok "Equipo «$team» en '$zone' · coordinador: $cs ($coord_a)"
   else
-    info_msg "La zona ya tiene coordinador: $cs (los ejecutores se suman a su equipo)."
+    info_msg "Equipo «$team» en '$zone' ($cs): los ejecutores se suman a él."
   fi
 
-  local a w team=()
+  local a w members=()
   for a in "${SW_AGENTS[@]}"; do
-    w=$(PRAMA_PARENT=$cs "$SELF_PATH" "$a" "$zone" --role executor --bg --porcelain --parallel ${wmodel:+--model "$wmodel"}) \
+    w=$(PRAMA_PARENT=$cs "$SELF_PATH" "$a" "$zone" --role executor --bg --porcelain --parallel \
+          ${base:+--name "$base-$a"} ${wmodel:+--model "$wmodel"}) \
       || { warn "No se pudo lanzar un ejecutor $a."; continue; }
-    team+=("$w ($a)")
+    members+=("$w ($a)")
     ok "Ejecutor: $w ($a)"
   done
 
   # The coordinator learns its team (and the objective) as soon as it is ready: the watchdog
   # delivers queued messages to an agent that has been READY for two ticks.
-  local brief="[PRAMA] Tu equipo en '$zone': ${team[*]:-(sin ejecutores)}. Delega con 'prama-agent bus assign <sesión> \"<tarea>\"', revisa con 'prama-agent fleet status' y suma o quita agentes con 'prama-agent fleet spawn|kill'."
+  local brief="[PRAMA] Tu equipo «$team» en '$zone': ${members[*]:-(sin ejecutores)}. Delega con 'prama-agent bus assign <sesión> \"<tarea>\"', revisa con 'prama-agent fleet status' y suma o quita agentes con 'prama-agent fleet spawn|kill'."
   [ -n "$task" ] && brief+=" OBJETIVO: $task"
   queue_push "$cs" "$brief"
-  bus_event queued operator "$cs" "equipo: ${team[*]:-}${task:+ · objetivo: $task}"
+  bus_event queued "${PRAMA_SESSION:-operator}" "$cs" "equipo $team: ${members[*]:-}${task:+ · objetivo: $task}"
   watchdog_ensure || true
-  declare -F telegram_notify >/dev/null && telegram_notify "🤝 Equipo en '$zone': $cs + ${#team[@]} ejecutor(es)" >/dev/null 2>&1
+  declare -F telegram_notify >/dev/null && telegram_notify "🤝 Equipo «$team» en '$zone': $cs + ${#members[@]} ejecutor(es)" >/dev/null 2>&1
 
   if (( open )) && [ -t 0 ] && [ -t 1 ]; then
-    subcmd_cockpit "$zone" --focus "$cs"
+    subcmd_cockpit "$cs"
   else
-    info_msg "Cockpit del equipo: prama-agent cockpit $zone"
+    info_msg "Cockpit del equipo: prama-agent cockpit $zone --team $team"
   fi
 }
 
+# _swarm_stop <zone> [--team T | --all]  |  _swarm_stop <coordinator session>
 _swarm_stop() {
-  local zone=${1:-} m cs s n=0
-  [ -n "$zone" ] || die "Uso: prama-agent swarm stop <zona>"
-  m=$(match_zone "$zone") || die "Zona desconocida: '$zone'"
-  zone=$m
-  cs=$(zone_coordinator "$zone") || die "No hay un equipo (coordinador) en '$zone'."
+  local arg=${1:-} team='' all=0 m zone c
+  [ -n "$arg" ] || die "Uso: prama-agent swarm stop <zona> [--team <nombre>|--all] | <sesión del coordinador>"
+  shift
+  while (( $# )); do
+    case "$1" in
+      --team|-T) team=${2:?--team requiere un nombre}; shift 2 ;;
+      --all)     all=1; shift ;;
+      *)         die "Argumento sobrante: '$1'" ;;
+    esac
+  done
+  local -a coords=()
+  if valid_session_name "$arg" && tmx_has "$arg" && [ "$(session_role "$arg")" = coordinator ]; then
+    coords=("$arg")
+  else
+    m=$(match_zone "$arg") || die "Zona o coordinador desconocido: '$arg'"
+    zone=$m
+    if [ -n "$team" ]; then
+      c=$(find_team "$zone" "$team") || die "No hay un equipo «$team» en '$zone' (equipos: $(_swarm_teams_hint "$zone"))."
+      coords=("$c")
+    else
+      mapfile -t coords < <(zone_teams "$zone")
+      (( ${#coords[@]} )) || die "No hay equipos en '$zone'."
+      (( ${#coords[@]} == 1 || all )) \
+        || die "La zona '$zone' tiene ${#coords[@]} equipos ($(_swarm_teams_hint "$zone")): indica --team <nombre> o --all."
+    fi
+  fi
+  for c in "${coords[@]}"; do _swarm_stop_team "$c"; done
+}
+
+_swarm_stop_team() {
+  local cs=$1 s n=0 label cockpit
+  label=$(team_label "$cs") cockpit=$(cockpit_session "$(state_get "$cs" ZONE)" "$cs")
   while IFS= read -r s; do
     [ "$(state_get "$s" PARENT)" = "$cs" ] || continue
-    tmx_kill "$s"; state_remove "$s"; bus_event stopped operator "$s" "swarm stop"; (( n++ ))
+    tmx_kill "$s"; state_remove "$s"; bus_event stopped "${PRAMA_SESSION:-operator}" "$s" "swarm stop"; (( n++ ))
   done < <(prama_sessions)
-  tmx_kill "$cs"; state_remove "$cs"; bus_event stopped operator "$cs" "swarm stop"
-  tmx_kill "$(cockpit_session "$zone")" 2>/dev/null || true
-  ok "Equipo de '$zone' cerrado: $cs y $n ejecutor(es)."
+  tmx_kill "$cs"; state_remove "$cs"; bus_event stopped "${PRAMA_SESSION:-operator}" "$cs" "swarm stop"
+  tmx_kill "$cockpit" 2>/dev/null || true
+  ok "Equipo «$label» cerrado: $cs y $n ejecutor(es)."
 }
 
 # ── Cockpit ─────────────────────────────────────────────────────────────────
-cockpit_session() { slugify "${PRAMA_SESSION_PREFIX}-cockpit-$1"; }
+# cockpit_session <zone> [coordinator] → prama-cockpit-<zone> (the zone, or its principal team) or
+# prama-cockpit-<zone>-<team>.
+cockpit_session() {
+  local team=''
+  [ -n "${2:-}" ] && team=$(team_name "$2")
+  if [ -n "$team" ] && [ "$team" != "$PRAMA_DEFAULT_TEAM" ]; then
+    slugify "${PRAMA_SESSION_PREFIX}-cockpit-$1-$team"
+  else
+    slugify "${PRAMA_SESSION_PREFIX}-cockpit-$1"
+  fi
+}
 
 # Pane command that shows a live agent session inside the cockpit (nested client on the same
 # server). Re-attaches while the session exists; exits when it is stopped.
@@ -165,26 +256,28 @@ cockpit_view_cmd() {
     "$q_sock" "$q_t" "$q_sock" "$q_conf" "$q_t"
 }
 
-# Members of a zone's team view, coordinator(s) first, at most PRAMA_COCKPIT_MAX.
+# Members shown in a cockpit, coordinator first, at most PRAMA_COCKPIT_MAX: a team (its
+# coordinator and the agents it launched) or, without a coordinator, every agent of the zone.
 _cockpit_members() {
-  local zone=$1 s z max=${PRAMA_COCKPIT_MAX:-6} n=0
+  local zone=$1 coord=${2:-} s z max=${PRAMA_COCKPIT_MAX:-6} n=0
   while IFS='|' read -r s _ z; do
     [ "$z" = "$zone" ] || continue
+    if [ -n "$coord" ] && [ "$s" != "$coord" ] && [ "$(state_get "$s" PARENT)" != "$coord" ]; then continue; fi
     (( n++ < max )) || break
     printf '%s\n' "$s"
   done < <(prama_team_order)
 }
 
-# cockpit_ensure <zone> [focus] → prints the cockpit session name. The layout follows the team:
+# cockpit_ensure <zone> [focus] [coordinator] → prints the cockpit session name. The layout follows the team:
 # when agents join or leave, the next call rebuilds it (the panes are only viewers, the agents
 # are untouched).
 cockpit_ensure() {
-  local zone=$1 focus=${2:-} cs dir s sig p first='' last='' pane
+  local zone=$1 focus=${2:-} coord=${3:-} cs dir s sig p first='' last='' pane
   local -a members=()
   dir=$(zone_dir "$zone") || dir=$HOME
-  mapfile -t members < <(_cockpit_members "$zone")
-  (( ${#members[@]} )) || { warn "No hay agentes en '$zone'. Lanza un equipo: prama-agent swarm $zone"; return 1; }
-  cs=$(cockpit_session "$zone")
+  mapfile -t members < <(_cockpit_members "$zone" "$coord")
+  (( ${#members[@]} )) || { warn "No hay agentes en '$zone'. Lanza un equipo: prama-agent swarm $zone --team <nombre>"; return 1; }
+  cs=$(cockpit_session "$zone" "$coord")
   valid_session_name "$cs" || return 1
   sig="${members[*]}"
   ensure_tmux_conf
@@ -200,6 +293,10 @@ cockpit_ensure() {
         pane=$(tmx new-session -d -P -F '#{pane_id}' -s "$cs" -x "${COLS:-160}" -y "${ROWS:-45}" -c "$dir" \
                  "${env_args[@]}" "$(cockpit_view_cmd "$s")") || return 1
         first=$pane
+        # Build at a fixed size: with window-size "latest" (tmux 3.2) a client-less window can shrink
+        # to the last active client (a small nested viewer) and the next split would not fit.
+        tmx set-option -w -t "$pane" window-size manual 2>/dev/null
+        tmx resize-window -t "$pane" -x "${COLS:-160}" -y "${ROWS:-45}" 2>/dev/null
       else
         pane=$(tmx split-window -P -F '#{pane_id}' -t "$last" -c "$dir" "${env_args[@]}" "$(cockpit_view_cmd "$s")") || break
         tmx select-layout -t "$first" tiled >/dev/null 2>&1   # keeps room for the next split
@@ -215,6 +312,7 @@ cockpit_ensure() {
     # Coordinator large on the left, the rest stacked on the right.
     tmx set-option -w -t "$cs" main-pane-width 58% 2>/dev/null
     tmx select-layout -t "$first" main-vertical >/dev/null 2>&1
+    tmx set-option -wu -t "$first" window-size 2>/dev/null   # follow the attached client again
     tmx set-option -t "=$cs" @prama_team "$sig" 2>/dev/null
     tmx set-option -t "=$cs" @prama_zone "$zone" 2>/dev/null
   fi
@@ -225,26 +323,46 @@ cockpit_ensure() {
   printf '%s' "$cs"
 }
 
+# cockpit_scope <arg> [team] → "zone|coordinator" (coordinator empty for a zone-wide view)
+cockpit_scope() {
+  local arg=${1:-} team=${2:-} zone='' coord='' m n
+  if [ -n "$arg" ] && valid_session_name "$arg" && tmx_has "$arg" && [ -n "$(state_get "$arg" ZONE)" ]; then
+    zone=$(state_get "$arg" ZONE); coord=$(session_team "$arg") || coord=''
+  elif [ -n "$arg" ]; then
+    m=$(match_zone "$arg") || { warn "Zona o sesión desconocida: '$arg'"; return 1; }
+    zone=$m
+    if [ -n "$team" ]; then
+      coord=$(find_team "$zone" "$team") || { warn "No hay un equipo «$team» en '$zone' (equipos: $(_swarm_teams_hint "$zone"))."; return 1; }
+    else
+      n=$(zone_teams "$zone" | grep -c . || true)
+      if (( n == 1 )); then coord=$(zone_teams "$zone")
+      elif (( n > 1 )); then warn "La zona '$zone' tiene $n equipos ($(_swarm_teams_hint "$zone")): indica --team <nombre>."; return 1
+      fi
+    fi
+  else
+    # No argument: the first team (or the first zone with agents).
+    IFS='|' read -r m _ zone < <(prama_team_order | head -n 1)
+    [ -n "$zone" ] || { warn "No hay agentes activos. Lanza un equipo: prama-agent swarm <zona> --team <nombre>"; return 1; }
+    coord=$(session_team "$m") || coord=''
+  fi
+  printf '%s|%s' "$zone" "$coord"
+}
+
 subcmd_cockpit() {
-  local arg='' focus='' attach=1 zone='' m
+  local arg='' focus='' attach=1 team='' scope zone coord
   while (( $# )); do
     case "$1" in
       --no-attach) attach=0; shift ;;
       --focus)     focus=${2:-}; shift 2 ;;
+      --team|-T)   team=${2:-}; shift 2 ;;
       *)           arg=$1; shift ;;
     esac
   done
-  if [ -n "$arg" ] && valid_session_name "$arg" && tmx_has "$arg" && [ -n "$(state_get "$arg" ZONE)" ]; then
-    zone=$(state_get "$arg" ZONE); focus=${focus:-$arg}
-  elif [ -n "$arg" ]; then
-    m=$(match_zone "$arg") || die "Zona o sesión desconocida: '$arg'"; zone=$m
-  else
-    # No argument: the first zone that has agents.
-    zone=$(prama_team_order | head -n 1 | cut -d'|' -f3)
-    [ -n "$zone" ] || die "No hay agentes activos. Lanza un equipo: prama-agent swarm <zona>"
-  fi
+  scope=$(cockpit_scope "$arg" "$team") || exit 1
+  zone=${scope%%|*} coord=${scope#*|}
+  if [ -z "$focus" ] && [ -n "$arg" ] && valid_session_name "$arg" && tmx_has "$arg"; then focus=$arg; fi
   local cs
-  cs=$(cockpit_ensure "$zone" "$focus") || exit 1
+  cs=$(cockpit_ensure "$zone" "${focus:-$coord}" "$coord") || exit 1
   if (( ! attach )) || [ ! -t 0 ] || [ ! -t 1 ]; then
     info_msg "Cockpit listo: prama-agent attach $cs"
     return 0
@@ -305,7 +423,8 @@ _nav_cockpit() {
   fi
   zone=$(state_get "$cur" ZONE)
   [ -n "$zone" ] || { tmx display-message -c "$client" "Esta sesión no pertenece a una zona" 2>/dev/null; return 0; }
-  cs=$(cockpit_ensure "$zone" "$cur" 2>/dev/null) || { tmx display-message -c "$client" "Sin agentes en $zone" 2>/dev/null; return 0; }
+  local coord; coord=$(session_team "$cur") || coord=''
+  cs=$(cockpit_ensure "$zone" "$cur" "$coord" 2>/dev/null) || { tmx display-message -c "$client" "Sin agentes en $zone" 2>/dev/null; return 0; }
   _nav_switch "$client" "$cs"
 }
 
@@ -384,8 +503,13 @@ _nav_pick() {
     printf -v line '%-10s %s%-34s %-8s %-11s %s' "$zone" "$( (( depth )) && printf '└ ' || printf '')" "$s" "$st" "$agent·${role:0:5}" "${model:-—}${q:+  ◔ $q}"
     rows+=("$line"); targets+=("$s")
   done < <(prama_team_order)
+  local c n
   for zone in ${zones_seen[@]+"${zones_seen[@]}"}; do
-    rows+=("▦ cockpit  $zone"); targets+=("@cockpit:$zone")
+    n=0
+    while IFS= read -r c; do
+      rows+=("▦ cockpit  $(team_label "$c")"); targets+=("@team:$c"); (( n++ ))
+    done < <(zone_teams "$zone")
+    (( n )) || { rows+=("▦ cockpit  $zone"); targets+=("@cockpit:$zone"); }
   done
   rows+=("◂ menú de prama"); targets+=("@menu")
   if command -v fzf >/dev/null 2>&1; then
@@ -403,6 +527,8 @@ _nav_pick() {
     '')          return 0 ;;
     @menu)       tmx detach-client -c "$client" 2>/dev/null ;;
     @cockpit:*)  local cs; cs=$(cockpit_ensure "${target#@cockpit:}" 2>/dev/null) && _nav_switch "$client" "$cs" ;;
+    @team:*)     local cs; c=${target#@team:}
+                 cs=$(cockpit_ensure "$(state_get "$c" ZONE)" "$c" "$c" 2>/dev/null) && _nav_switch "$client" "$cs" ;;
     *)           _nav_switch "$client" "$target" ;;
   esac
 }
