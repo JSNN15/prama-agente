@@ -100,6 +100,7 @@ export XDG_STATE_HOME="$TMP_ROOT/home/.local/state"
 export PRAMA_SYSTEM_CONFIG_DIR="$TMP_ROOT/no-system-config"
 export PATH="$TMP_ROOT/bin:$PATH"
 export NO_COLOR=1
+export LC_ALL=C.UTF-8     # what bin/prama-agent forces; the UI tests also source the libs directly
 unset TMUX IS_SANDBOX PRAMA_STATE_HOME PRAMA_BUS_DIR PRAMA_TMUX_CONF PRAMA_SKIP_PERMISSIONS PRAMA_DEFAULT_REMOTE PRAMA_SESSION
 export PRAMA_WATCHDOG=0   # enabled explicitly in the watchdog section
 STATE="$XDG_STATE_HOME/prama-agent"
@@ -432,6 +433,28 @@ PRAMA_SESSION=$co "$BIN" swarm alpha --workers agy:1 >/dev/null 2>&1
 assert_eq "A coordinator can grow its own team" "3" "$("$BIN" fleet status --json | jq --arg c "$co" '[.[] | select(.parent==$c)] | length')"
 "$BIN" cockpit alpha --no-attach >/dev/null 2>&1
 assert_eq "…and the cockpit follows the team" "5" "$($P list-panes -t '=tp-cockpit-alpha' 2>/dev/null | grep -c .)"
+# A phone: a real tmux client 60 columns wide, attached to the cockpit from another server.
+# The compact layout needs tmux ≥ 3.3 (status ranges, #{hook_client}); 3.2 keeps the split view.
+tmux_33() { [[ "$(tmux -V)" =~ ([0-9]+)\.([0-9]+) ]] && (( BASH_REMATCH[1] > 3 || (BASH_REMATCH[1] == 3 && BASH_REMATCH[2] >= 3) )); }
+if tmux_33; then
+zoomed() { $P display-message -p -t '=tp-cockpit-alpha:' '#{window_zoomed_flag}' 2>/dev/null; }
+tmux -L "$USER_SOCKET" new-session -d -s phone -x 60 -y 30 "env -u TMUX tmux -L $PRAMA_TMUX_SOCKET attach-session -t =tp-cockpit-alpha"
+assert_true "Cockpit on a phone-width client: one agent at a time (zoomed by the attach hook)" "wait_for 8 '[ \"\$(zoomed)\" = 1 ]'"
+phone=$($P list-clients -t '=tp-cockpit-alpha' -F '#{client_name}' 2>/dev/null | head -n 1)
+pane1=$($P display-message -p -t '=tp-cockpit-alpha:' '#{pane_id}')
+"$BIN" --internal-nav click "$phone" tp-cockpit-alpha next >/dev/null 2>&1
+assert_true "◀ ▶ page through the team inside the cockpit" "[ \"\$($P display-message -p -t '=tp-cockpit-alpha:' '#{pane_id}')\" != '$pane1' ]"
+assert_eq "…and the pane stays zoomed" "1" "$(zoomed)"
+tmux -L "$USER_SOCKET" resize-window -t '=phone:' -x 160 -y 40 2>/dev/null
+assert_true "A wide client gets the split view back (resize hook)" "wait_for 8 '[ \"\$(zoomed)\" = 0 ]'"
+$P resize-pane -Z -t '=tp-cockpit-alpha:' 2>/dev/null
+"$BIN" --internal-nav fit "$phone" tp-cockpit-alpha >/dev/null 2>&1
+assert_eq "…but a zoom chosen by the operator is left alone" "1" "$(zoomed)"
+tmux -L "$USER_SOCKET" kill-session -t '=phone' 2>/dev/null
+assert_contains "Compact status bar: previous / next buttons for phones" "range=user|next" "$(cat "$STATE/tmux.conf")"
+else
+assert_not_contains "tmux 3.2: no compact hooks (no #{hook_client} to rely on)" "client-resized" "$(cat "$STATE/tmux.conf")"
+fi
 out=$(PRAMA_SESSION=$co "$BIN" swarm beta --workers agy:1 2>&1); rc=$?
 assert_true "An agent cannot build a team outside its zone" "[ $rc -ne 0 ]"
 assert_contains "Navigation keys are bound on prama's tmux server" "--internal-nav pick" "$(cat "$STATE/tmux.conf")"
@@ -441,6 +464,26 @@ assert_eq "swarm stop closes the coordinator and its team" "0" "$("$BIN" fleet s
 assert_true "…and its cockpit" "! $P has-session -t =tp-cockpit-alpha 2>/dev/null"
 "$BIN" bus swarm-start beta claude agy >/dev/null 2>&1
 assert_eq "v5 'bus swarm-start' still works (coordinator + 1 executor)" "2" "$("$BIN" fleet status --json | jq '[.[] | select(.zone=="beta")] | length')"
+"$BIN" stop --all -y >/dev/null 2>&1
+
+section "Feedback channel (agents report prama bugs)"
+co=$("$BIN" claude alpha --role coordinator --bg --porcelain 2>/dev/null)
+out=$(PRAMA_SESSION=$co OPENROUTER_API_KEY=sk-or-v1-0123456789abcdefghij "$BIN" feedback "fleet model no cambió el modelo; key sk-or-v1-0123456789abcdefghij token=supersecret123" 2>&1)
+assert_contains "An agent files a report" "registrado" "$out"
+fid=$("$BIN" feedback list --json | jq -r '.[0].id')
+assert_true "…stored in the private state dir (0700)" "[ \"\$(stat -c %a '$STATE/feedback/$fid')\" = 700 ]"
+assert_eq "…with the reporter's context" "coordinator" "$(grep '^ROLE=' "$STATE/feedback/$fid/meta" | cut -d= -f2)"
+assert_not_contains "Secrets are redacted (provider key)" "0123456789abcdefghij" "$(cat "$STATE/feedback/$fid/body.md")"
+assert_not_contains "…and token=value pairs" "supersecret123" "$(cat "$STATE/feedback/$fid/body.md")"
+PRAMA_SESSION=$co "$BIN" feedback "fleet model no cambió el modelo; key sk-or-v1-0123456789abcdefghij token=supersecret123" >/dev/null 2>&1
+assert_eq "A repeated report counts instead of piling up" "1 2" "$("$BIN" feedback list --json | jq -r '"\(length) \(.[0].count)"')"
+assert_true "The operator is told through the bus" "grep -q '\"event\":\"feedback\"' '$STATE/bus/events.jsonl'"
+assert_contains "Export: a Markdown issue body" "### Environment" "$("$BIN" feedback export "$fid")"
+out=$(PRAMA_SESSION=$co "$BIN" feedback close "$fid" 2>&1); rc=$?
+assert_true "Agents cannot close reports" "[ $rc -ne 0 ]"
+"$BIN" feedback close "$fid" >/dev/null 2>&1
+assert_eq "The operator closes them" "0" "$("$BIN" feedback list --json | jq length)"
+assert_contains "Every agent learns how to report prama bugs" "prama-agent feedback" "$(bash -c 'source "'"$REPO_DIR"'/lib/core.sh"; source "'"$REPO_DIR"'/lib/roles.sh"; build_role_system_prompt executor s z')"
 "$BIN" stop --all -y >/dev/null 2>&1
 
 section "Installer"

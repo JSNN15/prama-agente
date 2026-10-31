@@ -48,6 +48,7 @@ BACKLOG_MAX_AGE = 300      # ignore text commands older than this (sent while th
 WATCH_INTERVAL = 2.0
 WATCH_MAX = 12.0
 MAX_LISTED = 25
+MAX_WORKERS = 6            # workers per team created from Telegram
 HOST = socket.gethostname().split(".")[0]
 
 TOKEN = ""
@@ -208,6 +209,16 @@ class Prama:
         return [d["name"] for d in self.json(["zones", "--json"], ttl=60)
                 if isinstance(d, dict) and isinstance(d.get("name"), str) and d["name"]]
 
+    def fleet(self):
+        """Agent sessions with team, model and quota (prama-agent fleet status --json)."""
+        return [d for d in self.json(["fleet", "status", "--json"])
+                if isinstance(d, dict) and isinstance(d.get("session"), str)]
+
+    def feedback(self):
+        """Open bug reports filed by agents (prama-agent feedback list --json)."""
+        return [d for d in self.json(["feedback", "list", "--json"])
+                if isinstance(d, dict) and isinstance(d.get("id"), str)]
+
     def capture(self, name, lines=SNAP_LINES):
         return self.ok(["capture", name, str(lines)], timeout=15)
 
@@ -261,6 +272,39 @@ def dot(s):
 
 def btn(text, data):
     return {"text": text, "callback_data": data}
+
+
+def quota_text(q):
+    """'5h 12% · 7d 40% · ctx 8%' from a fleet quota object (empty when unknown)."""
+    if not isinstance(q, dict):
+        return ""
+    parts = []
+    for key, label in (("five_hour_pct", "5h"), ("seven_day_pct", "7d"), ("context_pct", "ctx")):
+        v = q.get(key)
+        if isinstance(v, (int, float)):
+            parts.append("%s %d%%" % (label, v))
+    return " · ".join(parts)
+
+
+def quota_peak(q):
+    """Highest 5h / 7d usage, to flag agents close to their limit."""
+    if not isinstance(q, dict):
+        return 0
+    vals = [q.get(k) for k in ("five_hour_pct", "seven_day_pct")]
+    return max([v for v in vals if isinstance(v, (int, float))] or [0])
+
+
+def teams_of(fleet):
+    """{zone: (coordinator_row, [member_rows])} for zones that have a coordinator."""
+    teams = {}
+    for d in fleet:
+        if d.get("role") == "coordinator" and d.get("zone"):
+            teams.setdefault(d["zone"], (d, []))
+    for d in fleet:
+        for zone, (coord, members) in teams.items():
+            if d.get("parent") == coord["session"]:
+                members.append(d)
+    return teams
 
 
 # ── Bot ─────────────────────────────────────────────────────────────────────
@@ -378,7 +422,8 @@ class Bot:
         for s in controllable[:MAX_LISTED]:
             kb.append([self.b("%s %s · %s" % (dot(s), s["name"], s.get("role", "?")),
                               "s:" + s["name"])])
-        kb.append([self.b("➕ Nuevo agente", "n"), self.b("🤝 Enjambre", "w")])
+        kb.append([self.b("➕ Nuevo agente", "n"), self.b("🤝 Nuevo equipo", "w")])
+        kb.append([self.b("👥 Equipos", "T"), self.b("◔ Cuota", "q")])
         kb.append([self.b("🔄 Refrescar", "m"), self.b("❓ Ayuda", "h")])
         return "\n".join(lines), kb
 
@@ -420,11 +465,107 @@ class Bot:
             "/logs [sesión] — ver pantalla",
             "/send &lt;sesión&gt; &lt;texto&gt; — escribir a una sesión",
             "/launch &lt;agente&gt; &lt;zona&gt; [rol] — lanzar agente",
+            "/equipos — equipos: estado, hablar al coordinador, sumar o cerrar",
+            "/cuota — uso de cuota 5h / 7d por agente",
+            "/reportes — fallos de prama-agent reportados por los agentes",
             "/help — esta ayuda", "",
             "Texto normal → se envía a la sesión seleccionada (✍️).",
             "Roles: " + ", ".join(ROLES),
         ])
         return text, [[self.b("⬅ Volver", "m")]]
+
+    def view_teams(self, note=""):
+        teams = teams_of(self.prama.fleet())
+        lines = ([note, ""] if note else []) + ["<b>👥 Equipos</b>", ""]
+        kb = []
+        if not teams:
+            lines.append("<i>No hay equipos activos.</i>")
+        for zone in sorted(teams):
+            coord, members = teams[zone]
+            lines.append("%s <b>%s</b> · %s + %d agente(s)" % (dot(coord), e(zone), e(coord.get("agent", "?")),
+                                                                len(members)))
+            kb.append([self.b("🤝 %s (%d)" % (zone, len(members) + 1), "T:" + zone)])
+        kb.append([self.b("🤝 Nuevo equipo", "w"), self.b("⬅ Volver", "m")])
+        return "\n".join(lines), kb
+
+    def view_team(self, zone, note=""):
+        team = teams_of(self.prama.fleet()).get(zone)
+        if not team:
+            return self.view_teams("⚠️ No hay un equipo en <b>%s</b>." % e(zone))
+        coord, members = team
+        lines = ([note, ""] if note else []) + ["<b>🤝 Equipo · %s</b>" % e(zone), ""]
+        for d, lead in [(coord, "❖")] + [(m, "└") for m in members]:
+            st = str(d.get("state", "?")).lower()
+            if d.get("blocked_reason"):
+                st += " · " + str(d["blocked_reason"])
+            lines.append("%s %s <code>%s</code>" % (lead, dot(d), e(d["session"])))
+            meta = " · ".join(x for x in (d.get("agent", "?"), d.get("model") or "", st,
+                                          quota_text(d.get("quota"))) if x)
+            if d.get("queue"):
+                meta += " · ✉ %s" % d["queue"]
+            lines.append("    <i>%s</i>" % e(meta))
+        lines += ["", "💬 Lo que escribas tras «Hablar» va al coordinador, que reparte el trabajo."]
+        cs = coord["session"]
+        kb = [[self.b("💬 Hablar al coordinador", "t:" + cs), self.b("👁 Pantalla", "p:" + cs)]]
+        add = [self.b("➕ 1 %s" % a, "ta:%s:%s" % (zone, a)) for a in self.prama.agents()[:3]]
+        if add:
+            kb.append(add)
+        kb.append([self.b("🛑 Cerrar equipo", "tx:" + zone), self.b("🔄", "T:" + zone)])
+        kb.append([self.b("⬅ Equipos", "T"), self.b("☰ Menú", "m")])
+        return "\n".join(lines), kb
+
+    def view_quota(self):
+        fleet = self.prama.fleet()
+        lines = ["<b>◔ Cuota por agente</b>", ""]
+        for d in fleet:
+            q = quota_text(d.get("quota"))
+            warn = " ⚠️" if quota_peak(d.get("quota")) >= 90 else ""
+            lines.append("%s <code>%s</code>%s" % (dot(d), e(d["session"]), warn))
+            lines.append("    <i>%s</i>" % e(" · ".join(x for x in (d.get("model") or d.get("agent", "?"),
+                                                                    q or "sin datos aún") if x)))
+        if not fleet:
+            lines.append("<i>No hay agentes activos.</i>")
+        return "\n".join(lines), [[self.b("🔄 Actualizar", "q"), self.b("⬅ Volver", "m")]]
+
+    def view_reports(self):
+        reps = self.prama.feedback()
+        lines = ["<b>🐞 Reportes de fallos de prama-agent</b>", ""]
+        for d in reps[:MAX_LISTED]:
+            n = d.get("count") or 1
+            lines.append("• <code>%s</code> · %s · %s%s" % (e(d["id"]), e(d.get("kind", "bug")), e(d.get("from", "?")),
+                                                         " (×%s)" % e(n) if n != 1 else ""))
+            lines.append("    <i>%s</i>" % e(str(d.get("summary", ""))[:200]))
+        if not reps:
+            lines.append("<i>No hay reportes abiertos.</i>")
+        else:
+            lines += ["", "En el servidor: <code>prama-agent feedback show &lt;id&gt;</code> · "
+                          "<code>feedback export &lt;id&gt;</code> para un issue de GitHub."]
+        return "\n".join(lines), [[self.b("🔄 Actualizar", "f"), self.b("⬅ Volver", "m")]]
+
+    def do_team(self, zone, agent, count, edit_id=None):
+        """Creates the team of a zone, or adds workers to it when it already has a coordinator."""
+        if zone not in self.prama.zones():
+            return self.send(*self.view_error("Zona desconocida: %s" % zone, "w"), edit_id=edit_id)
+        if agent not in self.prama.agents():
+            return self.send(*self.view_error("Agente no permitido o no instalado: %s" % agent, "w"),
+                             edit_id=edit_id)
+        if not (1 <= count <= MAX_WORKERS):
+            return self.send(*self.view_error("Cantidad inválida (1-%d)." % MAX_WORKERS, "w"), edit_id=edit_id)
+        had = zone in teams_of(self.prama.fleet())
+        mid = self.send("⏳ %s <b>%d %s</b> en <b>%s</b>…" % ("Sumando" if had else "Creando equipo con",
+                                                            count, e(agent), e(zone)), edit_id=edit_id)
+        try:
+            self.prama.ok(["swarm", zone, "--workers", "%s:%d" % (agent, count), "--no-open"], timeout=240)
+        except CliError as ex:
+            return self.send(*self.view_error("No se pudo formar el equipo: %s" % ex, "w"), edit_id=mid)
+        team = teams_of(self.prama.fleet()).get(zone)
+        if team and not had:
+            self.selected = team[0]["session"]
+            note = ("✅ Equipo listo. <b>Escribe el objetivo</b>: lo que envíes ahora va al coordinador "
+                    "<b>%s</b>." % e(self.selected))
+        else:
+            note = "✅ %d %s sumado(s) al equipo." % (count, e(agent))
+        return self.send(*self.view_team(zone, note), edit_id=mid)
 
     def view_error(self, msg, back="m"):
         return "⚠️ %s" % e(msg), [[self.b("⬅ Volver", back)]]
@@ -575,19 +716,52 @@ class Bot:
                 return self.send(*self.view_error("Selección inválida.", "n"), edit_id=mid)
             agent, role, zone = parts
             return self.do_launch(agent, zone, role, edit_id=mid)
-        if act == "w":                      # swarm: choose zone
+        if act == "w":                      # new team: choose zone
             kb = [[self.b(z, "wz:" + z)] for z in self.prama.zones()] + [[self.b("⬅ Volver", "m")]]
-            return self.send("<b>🤝 Enjambre</b>\nCoordinador + Ejecutor. Elige la zona:", kb, edit_id=mid)
-        if act == "wz":
+            return self.send("<b>🤝 Nuevo equipo · 1/2</b>\nCoordinador + agentes ejecutores. Elige la zona:",
+                             kb, edit_id=mid)
+        if act == "wz":                     # choose workers
             if arg not in self.prama.zones():
-                return self.send(*self.view_error("Zona desconocida: %s" % arg), edit_id=mid)
-            self.send("⏳ Iniciando enjambre en <b>%s</b>…" % e(arg), edit_id=mid)
+                return self.send(*self.view_error("Zona desconocida: %s" % arg, "w"), edit_id=mid)
+            kb = [[self.b("%s × %d" % (a, n), "wn:%s:%s:%d" % (arg, a, n)) for n in (1, 2, 3)]
+                  for a in self.prama.agents()]
+            kb.append([self.b("⬅ Volver", "w")])
+            return self.send("<b>🤝 Nuevo equipo · 2/2</b>\nZona: <b>%s</b>\nElige los ejecutores:" % e(arg),
+                             kb, edit_id=mid)
+        if act in ("wn", "ta"):             # create the team / add one worker
+            parts = arg.split(":")
+            if act == "ta":
+                parts.append("1")
+            if len(parts) != 3 or not parts[2].isdigit():
+                return self.send(*self.view_error("Selección inválida.", "w"), edit_id=mid)
+            return self.do_team(parts[0], parts[1], int(parts[2]), edit_id=mid)
+        if act == "T":
+            if arg:
+                return self.send(*self.view_team(arg), edit_id=mid)
+            return self.send(*self.view_teams(), edit_id=mid)
+        if act == "q":
+            return self.send(*self.view_quota(), edit_id=mid)
+        if act == "f":
+            return self.send(*self.view_reports(), edit_id=mid)
+        if act in ("tx", "TX"):             # close a whole team (with confirmation)
+            team = teams_of(self.prama.fleet()).get(arg)
+            if not team:
+                return self.send(*self.view_teams("⚠️ No hay un equipo en <b>%s</b>." % e(arg)), edit_id=mid)
+            n = len(team[1]) + 1
+            if act == "tx":
+                return self.send("⚠️ ¿Cerrar el equipo de <b>%s</b>? Se detienen el coordinador y sus "
+                                 "agentes (%d sesiones)." % (e(arg), n),
+                                 [[self.b("✅ Sí, cerrar", "TX:" + arg), self.b("✖ No", "T:" + arg)]],
+                                 edit_id=mid)
+            self.send("⏳ Cerrando el equipo de <b>%s</b>…" % e(arg), edit_id=mid)
             try:
-                self.prama.ok(["bus", "swarm-start", arg], timeout=120)
+                self.prama.ok(["swarm", "stop", arg], timeout=120)
             except CliError as ex:
-                return self.send(*self.view_error("Enjambre fallido: %s" % ex), edit_id=mid)
-            text, kb = self.view_menu()
-            return self.send("🤝 Enjambre iniciado en <b>%s</b>.\n\n%s" % (e(arg), text), kb, edit_id=mid)
+                return self.send(*self.view_error("No se pudo cerrar: %s" % ex, "T:" + arg), edit_id=mid)
+            if self.selected in [team[0]["session"]] + [m["session"] for m in team[1]]:
+                self.selected = ""
+            return self.send(*self.view_teams("🛑 Equipo de <b>%s</b> cerrado (%d sesiones)." % (e(arg), n)),
+                             edit_id=mid)
         return self.send(*self.view_menu(), edit_id=mid)
 
     # ── text & commands ──
@@ -615,6 +789,13 @@ class Bot:
                 if not name or not msg.strip():
                     return self.send(*self.view_error("Uso: /send <sesión> <texto>"))
                 return self.deliver_text(name, msg)
+            if cmd in ("equipos", "equipo", "teams", "team"):
+                zone = rest.split()[0] if rest else ""
+                return self.send(*(self.view_team(zone) if zone else self.view_teams()))
+            if cmd in ("cuota", "quota"):
+                return self.send(*self.view_quota())
+            if cmd in ("reportes", "reports", "bugs"):
+                return self.send(*self.view_reports())
             if cmd == "launch":
                 args = rest.split()
                 if len(args) not in (2, 3):
@@ -695,6 +876,9 @@ class Bot:
                 {"command": "logs", "description": "Ver pantalla: /logs [sesión]"},
                 {"command": "send", "description": "Escribir: /send <sesión> <texto>"},
                 {"command": "launch", "description": "Lanzar: /launch <agente> <zona> [rol]"},
+                {"command": "equipos", "description": "Equipos: estado, hablar, sumar, cerrar"},
+                {"command": "cuota", "description": "Cuota 5h / 7d por agente"},
+                {"command": "reportes", "description": "Fallos de prama reportados por agentes"},
                 {"command": "help", "description": "Ayuda"},
             ]})
         except NetError as ex:

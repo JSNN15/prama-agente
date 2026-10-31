@@ -5,18 +5,54 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  lint:
+    name: Lint (bash, shellcheck, python, workflows)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Install dependencies
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux git jq shellcheck python3
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
 
-      - name: Lint (bash -n, shellcheck, py_compile)
+      - name: bash -n, shellcheck, py_compile
         run: make lint
 
-      - name: Test suite (isolated tmux server)
-        run: bash tests/test_prama_agent.sh
+      - name: actionlint
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
+
+  test:
+    # Each image pins a real combination users run: tmux 3.2a / 3.3a / 3.4, bash 5.1 / 5.2,
+    # Python 3.10 – 3.12. The suite runs as an unprivileged user with a /bin/sh login shell.
+    name: Test (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:22.04", "debian:12", "ubuntu:24.04"]
+    container: ${{ matrix.image }}
+    steps:
+      - name: Install git (checkout needs it for a real repository)
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test suite (isolated tmux server) and Telegram bot unit tests
+        run: bash .github/scripts/ci-container.sh "$GITHUB_WORKSPACE"

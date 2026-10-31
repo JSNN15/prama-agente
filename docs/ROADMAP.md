@@ -64,6 +64,8 @@ spread across machines.
 - English UI (the interface and role prompts are Spanish today); message catalogue for both languages.
 - `fleet status` history: per-agent cost and quota over time from the bus log.
 - Packaging: Homebrew tap and a `.deb`.
+- Feedback: `feedback export <id> --issue` to open the GitHub issue with `gh` after the operator
+  confirms, and a weekly digest of reports in Telegram.
 
 ---
 
@@ -135,3 +137,5 @@ muestre un equipo repartido entre máquinas.
   ambos idiomas.
 - Historial en `fleet status`: costo y cuota por agente a lo largo del tiempo, a partir del bus.
 - Empaquetado: tap de Homebrew y `.deb`.
+- Reportes: `feedback export <id> --issue` para abrir el issue en GitHub con `gh` tras la confirmación
+  del operador, y un resumen semanal de reportes en Telegram.

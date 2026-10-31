@@ -1,0 +1,49 @@
+name: Release
+
+# Pushing a tag vX.Y.Z publishes the GitHub release, with the notes of that version taken from
+# CHANGELOG.md. The tag must match VERSION in bin/prama-agent.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the tag matches VERSION
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n 's/^VERSION="\(.*\)"/\1/p' bin/prama-agent)
+          [ "v$version" = "$TAG" ] || { echo "::error::tag $TAG does not match VERSION=$version"; exit 1; }
+
+      - name: Extract the release notes from CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          awk -v v="${TAG#v}" '
+            /^## \[/ { if (on) exit; if (index($0, "[" v "]")) { on = 1; next } }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "::error::no CHANGELOG.md section for ${TAG#v}"; exit 1; }
+
+      - name: Publish (or update) the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" --verify-tag --title "prama-agent $TAG" --notes-file notes.md
+          fi

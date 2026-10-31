@@ -5,7 +5,7 @@
 
 set -u
 
-VERSION="6.1.0"
+VERSION="6.2.0"
 
 # Status line fast path: agy redraws it several times per second, so the last line is reused
 # for PRAMA_SL_MIN seconds with bash builtins only (no forks, before anything else runs).
@@ -66,7 +66,7 @@ if [ "${1:-}" = "--internal-statusline" ]; then
   exit 0
 fi
 
-for _m in core ui agents roles bus swarm health fleet telegram tui; do
+for _m in core ui agents roles bus swarm health fleet feedback telegram tui; do
   # shellcheck source=/dev/null
   source "$LIB_DIR/$_m.sh"
 done
@@ -144,6 +144,7 @@ ${C_BOLD}EQUIPOS${C_OFF}
 ${C_BOLD}SISTEMA${C_OFF}
   worktree list|create|remove|prune   profiles   mcp   zones|agents [--json]
   telegram setup|start|stop|restart|status|logs|test|notify   doctor [--restore-tmux-conf]
+  feedback "<fallo>" | list | show <id> | export <id> | close <id>   Reportes de fallos de prama (agentes)
   completion bash        Autocompletado           info  Guía rápida           update [versión]  Actualizar
 EOF
 }
@@ -511,6 +512,8 @@ subcmd_doctor() {
   if is_in opencode "${AGENTS[@]}" && [ -z "${OPENROUTER_API_KEY:-}" ]; then
     box_row "$C_BORDER_HI" "$meh opencode sin OPENROUTER_API_KEY en providers.env (o usa 'opencode auth login')"
   fi
+  if command -v mosh-server >/dev/null 2>&1; then box_row "$C_BORDER_HI" "$good mosh ${C_MUTED}(conexión estable desde el celular: mosh <servidor> -- prama-agent)${C_OFF}"
+  else box_row "$C_BORDER_HI" "${C_MUTED}○ mosh no instalado (opcional, recomendado para el celular: sudo apt install mosh)${C_OFF}"; fi
   if watchdog_running; then box_row "$C_BORDER_HI" "$good watchdog de la flota activo"
   else box_row "$C_BORDER_HI" "${C_MUTED}○ watchdog detenido (arranca con el primer agente)${C_OFF}"; fi
   if agent_installed agy && (( ${PRAMA_HOOKS:-1} )); then
@@ -520,6 +523,9 @@ subcmd_doctor() {
   command -v jq >/dev/null 2>&1 || box_row "$C_BORDER_HI" "$meh jq no instalado: sin telemetría de cuota ni hooks de agy (sudo apt install jq)"
 
   box_row "$C_BORDER_HI" "$good Estado privado (0700) ${C_MUTED}$PRAMA_STATE_HOME${C_OFF}"
+  local fb; fb=$(feedback_open_count)
+  if (( fb )); then box_row "$C_BORDER_HI" "$meh $fb reporte(s) de fallos de prama sin revisar: prama-agent feedback list"
+  else box_row "$C_BORDER_HI" "$good Sin reportes de fallos pendientes"; fi
   state_gc
 
   if (( PRAMA_SKIP_PERMISSIONS )); then
@@ -585,7 +591,7 @@ subcmd_completion() {
 # prama-agent bash completion — add to ~/.bashrc:  eval "$(prama-agent completion bash)"
 _prama_agent() {
   local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]} first=${COMP_WORDS[1]:-}
-  local subs="status ls sessions attach logs capture send restart stop fleet swarm bus cockpit fzf worktree profiles mcp zones agents telegram doctor update completion info help"
+  local subs="status ls sessions attach logs capture send restart stop fleet swarm bus cockpit fzf worktree profiles mcp zones agents telegram feedback doctor update completion info help"
   case "$prev" in
     --role|-O) COMPREPLY=($(compgen -W "executor coordinator reader daemon" -- "$cur")); return ;;
     --profile|-P) COMPREPLY=($(compgen -W "default openrouter deepseek glm local" -- "$cur")); return ;;
@@ -608,6 +614,7 @@ _prama_agent() {
     cockpit) COMPREPLY=($(compgen -W "$(prama-agent zones 2>/dev/null | awk '{print $1}') $(prama-agent sessions 2>/dev/null)" -- "$cur")); return ;;
     telegram) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "setup start stop restart status logs test notify" -- "$cur")); return ;;
     worktree) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "list create remove prune" -- "$cur")); return ;;
+    feedback|bug) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "list show export close help" -- "$cur")); return ;;
   esac
   if [ "$COMP_CWORD" -eq 1 ]; then
     COMPREPLY=($(compgen -W "$subs $(prama-agent agents 2>/dev/null | awk '{print $1}')" -- "$cur"))
@@ -650,6 +657,7 @@ if [ $# -gt 0 ]; then
     bus)                   shift; subcmd_bus "$@"; exit $? ;;
     fleet)                 shift; subcmd_fleet "$@"; exit $? ;;
     telegram|tg|bot)       shift; subcmd_telegram "$@"; exit $? ;;
+    feedback|bug)          shift; subcmd_feedback "$@"; exit $? ;;
     attach|a)              shift; subcmd_attach "${1:-}"; exit $? ;;
     stop|kill|k)           shift; subcmd_stop "$@"; exit $? ;;
     restart|r)             shift; subcmd_restart "${1:-}"; exit $? ;;

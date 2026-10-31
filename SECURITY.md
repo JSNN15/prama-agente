@@ -16,7 +16,7 @@ first answer within a week.
 
 In scope: command injection through session names, zones, task text or Telegram messages; state or
 queue files being executed; secrets exposed on a command line or in world-readable files; prama acting
-on tmux sessions or processes it does not own.
+on tmux sessions or processes it does not own; secrets reaching a feedback report unredacted.
 
 Out of scope: what an agent does once you run it in YOLO mode (`--yolo`), and vulnerabilities in the
 agent CLIs themselves (report those to their vendors).

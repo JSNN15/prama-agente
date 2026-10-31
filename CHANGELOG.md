@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [6.2.0] - 2026-10-31
+
+### Added
+- **Phone layout.** On clients narrower than `PRAMA_COMPACT_COLS` (100) the cockpit shows one agent at a
+  time (zoomed pane) and the status bar becomes large tap targets: `◂` menu · `◀` previous · `☰`
+  agents · `▶` next · `▦` cockpit. Back to the split view on a wide client; a zoom chosen by the
+  operator is left alone. tmux hooks drive it (tmux ≥ 3.3). Inside the cockpit, next / previous
+  (`Ctrl+b n/p`, `◀ ▶`) move between its panes.
+- **Teams from Telegram**: `/equipos` (team status with model and quota, talk to the coordinator, view
+  its screen, add a worker, close the team), *new team* (zone → workers → objective), `/cuota`.
+- **Feedback channel** for prama-agent bugs: `prama-agent feedback "<what happened>"` (any agent or the
+  operator), `list | show | export | close`. Reports keep their context (version, agent, model, state,
+  recent bus events), are redacted, deduplicated, announced on the bus and Telegram (`/reportes`), and
+  `export` produces a GitHub issue body. Every role prompt includes it; doctor and the menu show the
+  open count.
+- `x` on a coordinator in the menu closes its whole team with one confirmation.
+- Doctor checks for mosh; the README has an "On your phone" section (mosh, compact layout, Telegram).
+- Telegram bot unit tests (fake Telegram API and CLI, no network).
+- CI: test matrix in clean containers (Ubuntu 22.04 / Debian 12 / Ubuntu 24.04: tmux 3.2a, 3.3a, 3.4;
+  unprivileged user with a `/bin/sh` login shell), actionlint, CodeQL, OpenSSF Scorecard, SHA-pinned
+  actions with Dependabot, release workflow from the tag and this changelog. Issue forms, PR template,
+  CODEOWNERS, `.editorconfig`, `make test-matrix`.
+
+### Changed
+- The menu's action rows show only their label on a phone instead of a description cut short.
+- Telegram's *Enjambre* (coordinator + one executor) became *Nuevo equipo* with a choice of workers.
+
+### Fixed
+- **Agents died on launch for users whose login shell is not bash** (dash, fish): tmux ran prama's pane
+  commands, which use bash quoting, with the user's shell. prama's tmux server now runs commands with
+  bash (`default-shell`) while plain panes still open the user's own shell (`default-command`). Found
+  by the new container matrix.
+
 ## [6.1.0] - 2026-10-30
 
 ### Added
@@ -16,8 +49,7 @@ All notable changes to this project are documented here. The format follows
   agent, `Ctrl+b n/p` next/previous agent; tappable `◂ MENU · ☰ AGENTES · ▦ COCKPIT` status-bar
   buttons (tmux ≥ 3.3).
 - TUI: sessions grouped as teams, `s` new-team wizard, cockpit action with team picker; restart keeps
-  the conversation; `x` on a coordinator closes the whole team.
-- Cockpit hint on narrow screens; docs recommend a tablet or computer for the cockpit.
+  the conversation.
 - One-line installer (`curl … | bash`, per-user without root) and `prama-agent update [version]`.
 - NOTICE, CITATION.cff and author information.
 

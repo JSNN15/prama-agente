@@ -7,6 +7,7 @@
 ![bash ≥ 4.4](https://img.shields.io/badge/bash-%E2%89%A5%204.4-4EAA25)
 ![tmux ≥ 3.2](https://img.shields.io/badge/tmux-%E2%89%A5%203.2-1BB91F)
 ![Release](https://img.shields.io/github/v/release/JSNN15/prama-agente)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/JSNN15/prama-agente/badge)](https://scorecard.dev/viewer/?uri=github.com/JSNN15/prama-agente)
 
 **Plano de control en la terminal para agentes de código.** prama-agent lanza, supervisa y coordina
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) y Google Antigravity (`agy`) en varios
@@ -18,7 +19,7 @@ bloqueado por un login, una cuota o un problema de facturación.
 Es bash sobre un servidor tmux dedicado: sin daemon que instalar, sin base de datos, sin Node.js.
 
 ```
- ◆ PRAMA AGENT v6.1.0  server-01                   ● 3 activos · 1 trabajando   LOAD 1.63 · RAM 21%
+ ◆ PRAMA AGENT v6.2.0  server-01                   ● 3 activos · 1 trabajando   LOAD 1.63 · RAM 21%
  Próximo agente ›  o  Rol ✦ executor   y  Permisos ● ASK   e  Remoto off   p  Perfil default
 ╭─ Sesiones ───────────────────────────────── 3 ─╮╭─ ◉ prama-agy-backend ─────────────────────────╮
 │   ● claude-backend   ❖ coord listo   ▱▱▱▱   0% ││ ✦ executor · ● trabaja · CPU 3% · up 04:12    │
@@ -58,9 +59,10 @@ prama-agent doctor           # verifica dependencias, agentes, hooks y configura
 ```
 
 Sin `sudo` se instala para tu usuario (`~/.local/bin`, `~/.config/prama-agent`). Desde un clon:
-`sudo make install` o `make install`. Para actualizar: `prama-agent update` (o `update v6.1.0`).
+`sudo make install` o `make install`. Para actualizar: `prama-agent update` (o `update v6.2.0`).
+Probado en Ubuntu 22.04 / 24.04 y Debian 12 (tmux 3.2a, 3.3a y 3.4), con cualquier shell de inicio.
 
-Requisitos: bash ≥ 4.4, tmux ≥ 3.2 (3.3+ para los botones táctiles de la barra), git. Recomendados:
+Requisitos: bash ≥ 4.4, tmux ≥ 3.2 (3.3+ para los botones táctiles de la barra y el modo celular), git. Recomendados:
 `jq` (hooks y telemetría de cuota), `fzf`, `less`. El puente opcional con Telegram necesita `python3`
 y `curl`. Al menos un CLI de agente: `claude` (Claude Code) o `agy` (Antigravity CLI). Por defecto, las
 zonas son los repositorios git que hay en `/opt` y `$HOME`; nómbralas en `config.env` si quieres alias
@@ -121,14 +123,29 @@ agente o desde el cockpit:
 | `Alt+m` | `◂ MENU` | volver al menú (los agentes siguen trabajando) |
 | `Alt+a` | `☰ AGENTES` | lista de agentes (equipos, estado, modelo, cuota): ir a cualquiera o a un cockpit |
 | `Alt+c` | `▦ COCKPIT` | cockpit del equipo ⇄ el agente con el foco |
-| `Ctrl+b n` / `Ctrl+b p` | | agente siguiente / anterior |
+| `Ctrl+b n` / `Ctrl+b p` | `▶` / `◀` (celular) | agente siguiente / anterior; dentro del cockpit, el panel siguiente / anterior |
 | `Ctrl+b z` | | agrandar el panel con el foco en el cockpit |
 
 Las teclas se configuran con `PRAMA_MENU_KEY`, `PRAMA_NAV_KEY` y `PRAMA_COCKPIT_KEY`; los botones
-funcionan con toques en Termius.
+funcionan con toques en Termius, Blink o cualquier terminal con soporte de mouse.
 
-> **Tamaño de pantalla.** El cockpit rinde mejor en tablet o computador (100+ columnas). En el teléfono
-> es usable: agranda un agente con `Ctrl+b z`, o sáltate el cockpit y muévete entre agentes con `Alt+a`.
+## Desde el celular
+
+El cockpit rinde mejor en tablet o computador, y está pensado para funcionar también en el celular:
+
+- **Modo compacto, automático.** En una pantalla de menos de `PRAMA_COMPACT_COLS` (100 columnas) el
+  cockpit muestra un agente a la vez, a pantalla completa, y la barra inferior pasa a botones grandes
+  para tocar: `◂` menú · `◀` anterior · `☰` agentes · `▶` siguiente · `▦` cockpit. Gira a horizontal o
+  abre la misma sesión en un computador y vuelve la vista dividida. Si agrandaste un panel tú mismo
+  con `Ctrl+b z`, se respeta. (tmux ≥ 3.3; con 3.2, agranda a mano con `Ctrl+b z`.)
+- **El menú se adapta** al ancho: una columna, etiquetas cortas y la vista en vivo del agente
+  seleccionado debajo de la lista.
+- **Usa mosh.** Mantiene la conexión al pasar de wifi a datos, en túneles y con la pantalla bloqueada,
+  donde SSH se corta. En el servidor: `sudo apt install mosh` y abre UDP 60000-61000; en el celular,
+  Termius o Blink: `mosh usuario@servidor -- prama-agent`. `prama-agent doctor` te dice si mosh está
+  disponible.
+- **Telegram para una mirada rápida.** Estado del equipo, cuota, hablarle al coordinador o cerrar un
+  equipo, en dos toques desde el bot (ver abajo), sin terminal.
 
 ## Administración de la flota
 
@@ -223,9 +240,36 @@ prama-agent telegram start     # bot 24/7 en una sesión persistente (status | l
 ```
 
 Emparejamiento con código de un solo uso (solo tu chat y tu usuario quedan autorizados), menús con
-botones para ver una pantalla, hablar con un agente, lanzar, reiniciar o cerrar, y argumentos validados
-contra listas blancas. El bot equivale a una terminal remota: protege tu cuenta de Telegram con
-verificación en dos pasos.
+botones y argumentos validados contra listas blancas. Desde el bot puedes:
+
+- **Equipos** (`/equipos`): cada equipo con sus agentes, estado, modelo y cuota; *hablar al
+  coordinador* (lo que escribas después le llega a él), ver su pantalla, sumar un agente o cerrar el
+  equipo completo (con confirmación). *Nuevo equipo* pide la zona y los ejecutores (`agy × 1-3`, …) y
+  toma tu siguiente mensaje como objetivo.
+- **Cuota** (`/cuota`): 5 h / 7 d / contexto por agente, marcada al 90 %.
+- **Agentes**: ver pantalla, hablar, lanzar, reiniciar o cerrar; **reportes de fallos** de los
+  agentes (`/reportes`).
+
+El bot equivale a una terminal remota: protege tu cuenta de Telegram con verificación en dos pasos.
+
+## Reportar fallos de prama-agent (también los agentes)
+
+Los agentes usan prama todo el día, así que son los primeros en notar cuando algo falla. Todos los
+roles traen un canal interno para eso:
+
+```bash
+prama-agent feedback "fleet model agy-backend-2 gemini-3.8-pro: reinició con el modelo anterior"   # agente o tú
+prama-agent feedback list                  # reportes abiertos (también en doctor, el menú y Telegram /reportes)
+prama-agent feedback show <id>             # reporte y contexto: versión, agente, modelo, estado, últimos eventos
+prama-agent feedback export <id> | gh issue create -R JSNN15/prama-agente -t "…" -F -
+prama-agent feedback close <id>
+```
+
+Los reportes quedan en el servidor (`~/.local/state/prama-agent/feedback`, modo `0700`), con las claves
+de proveedores y todo lo que parezca un token reemplazado por `***`. Un reporte repetido se cuenta en
+vez de duplicarse, el operador recibe aviso (bus y Telegram) y **nada se publica sin ti**: `export`
+genera el Markdown para la [plantilla de reporte](.github/ISSUE_TEMPLATE/bug_report.yml), tú lo revisas
+y lo publicas.
 
 ## Perfiles LLM
 
@@ -253,6 +297,8 @@ prama-agent claude backend --profile deepseek
 | `PRAMA_WATCHDOG` | `1` | watchdog de la flota |
 | `PRAMA_SWARM_WORKERS` | `agy:2` | ejecutores por defecto de `swarm` |
 | `PRAMA_MENU_KEY` / `PRAMA_NAV_KEY` / `PRAMA_COCKPIT_KEY` | `M-m` / `M-a` / `M-c` | teclas de navegación en tmux |
+| `PRAMA_COMPACT_COLS` | `100` | clientes más angostos reciben el modo celular |
+| `PRAMA_FEEDBACK_MAX_OPEN` | `50` | reportes abiertos antes de pedir a los agentes que esperen |
 | `PRAMA_EXPERIMENTAL` | `0` | habilita agentes experimentales (OpenCode) |
 
 Los **worktrees** (`-w <rama>`) se crean fuera del repositorio
@@ -284,9 +330,15 @@ propio servidor.
 ## Desarrollo
 
 ```bash
-make lint     # bash -n, shellcheck, py_compile
-make test     # suite de extremo a extremo en un servidor tmux, HOME y estado aislados
+make lint          # bash -n, shellcheck, py_compile
+make test          # tests del bot de Telegram + suite de extremo a extremo en tmux, HOME y estado aislados
+make test-matrix   # la matriz del CI en contenedores locales: Ubuntu 22.04, Debian 12, Ubuntu 24.04
 ```
+
+El CI corre la suite en contenedores limpios (tmux 3.2a, 3.3a y 3.4; un usuario sin privilegios con
+`/bin/sh` como shell), más shellcheck, actionlint, CodeQL y OpenSSF Scorecard. Las Actions están
+fijadas por SHA de commit y Dependabot las mantiene al día; los releases se publican desde el tag y
+`CHANGELOG.md`.
 
 Arquitectura, invariantes de seguridad y API interna: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 (en inglés). Contribuir: [CONTRIBUTING.md](CONTRIBUTING.md). Cambios: [CHANGELOG.md](CHANGELOG.md).

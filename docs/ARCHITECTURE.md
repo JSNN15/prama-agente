@@ -16,11 +16,12 @@ Internal design reference for contributors (English only). User documentation:
 | `lib/swarm.sh` | Teams (`swarm`), the dynamic team cockpit, in-tmux navigation (`--internal-nav`) |
 | `lib/health.sh` | CLI hooks (claude, agy) → health file, status line → quota file, `BLOCKED`/quota alerts, fleet watchdog, queued delivery |
 | `lib/fleet.sh` | `prama-agent fleet …`: spawn/kill/model/edit/restart with guard rails |
+| `lib/feedback.sh` | `prama-agent feedback …`: bug reports from agents and the operator (local, redacted, deduplicated) |
 | `lib/telegram.sh` + `lib/telegram_bot.py` | Telegram bridge |
 | `lib/tui.sh` | Interactive full-screen TUI |
 
 Source order: `core.sh` → `ui.sh` → `agents.sh` → `roles.sh` → `bus.sh` → `swarm.sh` → `health.sh` → `fleet.sh` →
-`telegram.sh` → `tui.sh`. `--internal-hook` and `--internal-statusline` are fast paths that only source
+`feedback.sh` → `telegram.sh` → `tui.sh`. `--internal-hook` and `--internal-statusline` are fast paths that only source
 `core.sh` + `health.sh`; outside prama panes the hook exits before sourcing anything (agy's hooks are
 global), and the status line reuses its last output for `PRAMA_SL_MIN` seconds using bash builtins only
 (agy redraws it several times per second).
@@ -48,6 +49,11 @@ creates private dirs).
     only owns the `prama-agent` key of `~/.gemini/config/hooks.json`.
 11. **Agents managing agents** go through `_fleet_authorize`: not itself, not a coordinator, within
     `PRAMA_FLEET_SCOPE`; `spawn` is capped by `PRAMA_FLEET_MAX`.
+12. **Pane commands are bash.** They are built with `printf %q` (which may emit `$'…'`), so prama's
+    tmux server runs commands with bash (`default-shell`) and only plain panes open the user's login
+    shell (`default-command`). Never assume the user's shell can parse a generated command line.
+13. **Agents never publish.** The feedback channel writes local reports only; turning one into a
+    GitHub issue is an explicit operator step (`feedback export`). Agents cannot close reports.
 
 ## core.sh API
 
@@ -128,9 +134,17 @@ The TUI reads core's process tables (`PS_COMM`, `PS_CHILDREN`, `PS_CPU`, `PS_RSS
 - Cockpit panes are nested tmux clients attached to the real agent sessions (viewers only): rebuilding
   the cockpit never touches an agent. Key bindings call back with `--internal-nav` and receive the
   socket and state dir explicitly, because tmux does not pass the client's environment to them.
+- **Compact layout (phones).** `client-attached`, `client-resized` and `client-session-changed` hooks
+  call `--internal-nav fit` for cockpit sessions. Inside a hook `#{client_name}` can name another
+  client (the cockpit's nested viewers resize too), so the hook passes `#{hook_client}` (tmux ≥ 3.3)
+  and `_nav_fit` re-reads that client's session and width from `list-clients`. Zoom is a toggle and
+  hooks fire concurrently, so the test-and-toggle runs as one `if-shell -F` inside the tmux server;
+  `@prama_autozoom` marks prama's zoom so a zoom chosen by the operator is never undone. The status bar
+  switches its buttons with `#{e|<:#{client_width},PRAMA_COMPACT_COLS}`.
 
 ## Machine-readable CLI (used by the Telegram bot and scripts)
 
 `fleet status --json`, `fleet spawn … --json`, `sessions --json`, `zones --json`, `agents --json`,
+`feedback list --json`, `swarm <zone> --workers A:N --no-open`, `swarm stop <zone>`,
 `capture <s> [N]`, `send <s> <text>`,
 `<agent> <zone> … --bg --porcelain` (prints only the session name).

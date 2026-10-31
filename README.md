@@ -7,6 +7,7 @@
 ![bash ≥ 4.4](https://img.shields.io/badge/bash-%E2%89%A5%204.4-4EAA25)
 ![tmux ≥ 3.2](https://img.shields.io/badge/tmux-%E2%89%A5%203.2-1BB91F)
 ![Release](https://img.shields.io/github/v/release/JSNN15/prama-agente)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/JSNN15/prama-agente/badge)](https://scorecard.dev/viewer/?uri=github.com/JSNN15/prama-agente)
 
 **A terminal control plane for CLI coding agents.** prama-agent launches, supervises and coordinates
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and Google Antigravity (`agy`) across
@@ -18,7 +19,7 @@ billing problem.
 It is plain bash on top of a dedicated tmux server: no daemon to install, no database, no Node.js.
 
 ```
- ◆ PRAMA AGENT v6.1.0  server-01                   ● 3 activos · 1 trabajando   LOAD 1.63 · RAM 21%
+ ◆ PRAMA AGENT v6.2.0  server-01                   ● 3 activos · 1 trabajando   LOAD 1.63 · RAM 21%
  Próximo agente ›  o  Rol ✦ executor   y  Permisos ● ASK   e  Remoto off   p  Perfil default
 ╭─ Sesiones ───────────────────────────────── 3 ─╮╭─ ◉ prama-agy-backend ─────────────────────────╮
 │   ● claude-backend   ❖ coord listo   ▱▱▱▱   0% ││ ✦ executor · ● trabaja · CPU 3% · up 04:12    │
@@ -60,9 +61,10 @@ prama-agent doctor           # checks dependencies, agents, hooks and config
 ```
 
 Without `sudo` it installs for the current user (`~/.local/bin`, `~/.config/prama-agent`). From a clone:
-`sudo make install` or `make install`. Update later with `prama-agent update` (or `update v6.1.0`).
+`sudo make install` or `make install`. Update later with `prama-agent update` (or `update v6.2.0`).
+Tested on Ubuntu 22.04 / 24.04 and Debian 12 (tmux 3.2a, 3.3a and 3.4), with any login shell.
 
-Requirements: bash ≥ 4.4, tmux ≥ 3.2 (3.3+ for clickable status-bar buttons), git. Recommended: `jq`
+Requirements: bash ≥ 4.4, tmux ≥ 3.2 (3.3+ for clickable status-bar buttons and the phone layout), git. Recommended: `jq`
 (hooks and quota telemetry), `fzf`, `less`. The optional Telegram bridge needs `python3` and `curl`.
 At least one agent CLI: `claude` (Claude Code) or `agy` (Antigravity CLI). Zones default to the git
 repositories found under `/opt` and `$HOME`; name them in `config.env` when you want short aliases.
@@ -110,14 +112,29 @@ from the cockpit:
 | `Alt+m` | `◂ MENU` | back to the menu (agents keep running) |
 | `Alt+a` | `☰ AGENTES` | agent list (teams, state, model, quota): jump to any agent or cockpit |
 | `Alt+c` | `▦ COCKPIT` | team cockpit ⇄ the agent in focus |
-| `Ctrl+b n` / `Ctrl+b p` | | next / previous agent |
+| `Ctrl+b n` / `Ctrl+b p` | `▶` / `◀` (phone) | next / previous agent; inside the cockpit, the next / previous pane |
 | `Ctrl+b z` | | zoom the focused cockpit pane |
 
 Keys are configurable (`PRAMA_MENU_KEY`, `PRAMA_NAV_KEY`, `PRAMA_COCKPIT_KEY`); the buttons work by
-touch in Termius.
+touch in Termius, Blink or any terminal with mouse support.
 
-> **Screen size.** The cockpit is best on a tablet or a computer (100+ columns). On a phone it works:
-> zoom into one agent with `Ctrl+b z`, or skip the cockpit and jump between agents with `Alt+a`.
+## On your phone
+
+The cockpit is at its best on a tablet or a computer, and it is designed to work on a phone too:
+
+- **Compact layout, automatic.** On a screen narrower than `PRAMA_COMPACT_COLS` (100 columns) the
+  cockpit shows one agent at a time, full screen, and the status bar turns into large tap targets:
+  `◂` menu · `◀` previous · `☰` agents · `▶` next · `▦` cockpit. Rotate to landscape or open the same
+  session on a computer and the split view comes back. A zoom you chose with `Ctrl+b z` is left alone.
+  (tmux ≥ 3.3; with 3.2, zoom by hand with `Ctrl+b z`.)
+- **The menu adapts** to the width: a single column, short labels, the live preview of the selected
+  agent below the list.
+- **Use mosh.** It keeps the connection through Wi-Fi ↔ mobile data changes, tunnels and a locked
+  screen, where SSH drops. On the server: `sudo apt install mosh` and open UDP 60000-61000; on the
+  phone, Termius or Blink: `mosh user@server -- prama-agent`. `prama-agent doctor` tells you whether
+  mosh is available.
+- **Telegram for a quick look.** Team status, quota, talking to the coordinator or closing a team
+  takes two taps from the bot (see below), with no terminal at all.
 
 ## Fleet management
 
@@ -208,9 +225,35 @@ prama-agent telegram setup     # paste the @BotFather token, then send the one-t
 prama-agent telegram start     # 24/7 bot in a persistent session (status | logs | restart | stop)
 ```
 
-One-time pairing code (only your chat and user are authorised), inline menus to view a screen, talk
-to an agent, launch, restart or stop, and argument whitelists. The bot is a remote terminal: protect
-your Telegram account with two-step verification.
+One-time pairing code (only your chat and user are authorised), inline menus and argument
+whitelists. From the bot you can:
+
+- **Teams** (`/equipos`): each team with its agents, state, model and quota; *talk to the coordinator*
+  (what you write next goes to it), view its screen, add a worker, or close the whole team (with
+  confirmation). *New team* asks for the zone and the workers (`agy × 1-3`, …) and then takes your next
+  message as the objective.
+- **Quota** (`/cuota`): 5 h / 7 d / context per agent, flagged at 90 %.
+- **Agents**: view a screen, talk, launch, restart or stop; **bug reports** from agents (`/reportes`).
+
+The bot is a remote terminal: protect your Telegram account with two-step verification.
+
+## Reporting prama-agent bugs (agents included)
+
+Agents use prama all day, so they are the first to notice when it misbehaves. Every role prompt
+includes an internal channel for that:
+
+```bash
+prama-agent feedback "fleet model agy-backend-2 gemini-3.8-pro: restarted with the old model"   # agent or you
+prama-agent feedback list                  # open reports (also in doctor, the menu and Telegram /reportes)
+prama-agent feedback show <id>             # report + context: version, agent, model, state, recent bus events
+prama-agent feedback export <id> | gh issue create -R JSNN15/prama-agente -t "…" -F -
+prama-agent feedback close <id>
+```
+
+Reports stay on the server (`~/.local/state/prama-agent/feedback`, mode `0700`), with provider keys and
+token-like strings redacted. A repeated report is counted instead of duplicated, the operator is
+notified (bus and Telegram), and **nothing is published without you**: `export` produces the Markdown
+for the [bug report template](.github/ISSUE_TEMPLATE/bug_report.yml), you review it and post it.
 
 ## LLM profiles
 
@@ -238,6 +281,8 @@ prama-agent claude backend --profile deepseek
 | `PRAMA_WATCHDOG` | `1` | fleet watchdog |
 | `PRAMA_SWARM_WORKERS` | `agy:2` | default workers for `swarm` |
 | `PRAMA_MENU_KEY` / `PRAMA_NAV_KEY` / `PRAMA_COCKPIT_KEY` | `M-m` / `M-a` / `M-c` | navigation keys inside tmux |
+| `PRAMA_COMPACT_COLS` | `100` | clients narrower than this get the phone layout |
+| `PRAMA_FEEDBACK_MAX_OPEN` | `50` | open bug reports before agents are asked to wait |
 | `PRAMA_EXPERIMENTAL` | `0` | enable experimental agents (OpenCode) |
 
 **Worktrees** (`-w <branch>`) are created outside the repository
@@ -269,9 +314,14 @@ v6 uses its own.
 ## Development
 
 ```bash
-make lint     # bash -n, shellcheck, py_compile
-make test     # end-to-end suite on an isolated tmux server, HOME and state
+make lint          # bash -n, shellcheck, py_compile
+make test          # Telegram bot unit tests + end-to-end suite on an isolated tmux server, HOME and state
+make test-matrix   # the CI matrix in local containers: Ubuntu 22.04, Debian 12, Ubuntu 24.04
 ```
+
+CI runs the suite in clean containers (tmux 3.2a, 3.3a, 3.4; an unprivileged user with a `/bin/sh`
+login shell), plus shellcheck, actionlint, CodeQL and OpenSSF Scorecard. Actions are pinned by commit
+SHA and kept current by Dependabot; releases are published from the tag and `CHANGELOG.md`.
 
 Architecture, security invariants and internal API: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). Changes: [CHANGELOG.md](CHANGELOG.md).

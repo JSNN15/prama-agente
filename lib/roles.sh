@@ -38,6 +38,7 @@ Comandos del bus multi-agente (ejecútalos con tu herramienta Bash):
 - Reportar un resultado al coordinador:              prama-agent bus report "<resumen>"
 - Ver tareas pendientes en tu cola:                  prama-agent bus inbox $session_name
 - Leer la terminal de otro agente:                   prama-agent logs <sesión> 80
+- Reportar un fallo de prama-agent (no de tu tarea):  prama-agent feedback "<comando, qué esperabas, qué obtuviste>"
 EOF
 )
   local agents_list=${AGENTS[*]} models_help

@@ -1,0 +1,23 @@
+name: Feature request / Propuesta
+description: A change in how prama-agent works. / Un cambio en cómo funciona prama-agent.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Problema
+      description: What you are trying to do and what gets in the way. / Qué intentas hacer y qué lo impide.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal / Propuesta
+      description: How it could work, including the commands or keys involved. / Cómo podría funcionar, con los comandos o teclas involucrados.
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Design principles / Principios de diseño
+      options:
+        - label: Keeps agents alive across SSH drops and keeps their scrollback. / Mantiene a los agentes vivos si se cae el SSH y conserva su historial.
+        - label: Deterministic, no hidden state; nothing written to the user's own tmux or shell config. / Determinista, sin estado oculto; no toca la configuración de tmux ni de shell del usuario.

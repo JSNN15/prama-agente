@@ -24,12 +24,18 @@ Thanks for your interest in prama-agent. Issues and pull requests are welcome in
 ## Workflow
 
 ```bash
-make lint     # bash -n, shellcheck, py_compile
-make test     # end-to-end suite on an isolated tmux server, HOME and state
+make lint          # bash -n, shellcheck, py_compile
+make test          # Telegram bot unit tests + end-to-end suite on an isolated tmux server, HOME and state
+make test-matrix   # the CI matrix in local containers (needs Docker): tmux 3.2a, 3.3a, 3.4
 ```
 
-- Every bug fix comes with a regression test in `tests/test_prama_agent.sh`. Tests never touch your
-  real tmux, `HOME` or `/etc`.
+- Every bug fix comes with a regression test in `tests/test_prama_agent.sh` (or
+  `tests/test_telegram_bot.py` for the bot). Tests never touch your real tmux, `HOME` or `/etc`.
+- Behaviour that depends on the tmux version is gated in code and in tests (see `tmux_33` in the suite);
+  CI must stay green on every image of the matrix.
+- Workflow actions are pinned by commit SHA (Dependabot updates them); keep it that way in new workflows.
+- Releases: bump `VERSION` in `bin/prama-agent`, add the `CHANGELOG.md` section, tag `vX.Y.Z`; the
+  release workflow publishes the notes.
 - Keep comments in English; user-facing messages are Spanish today (see the roadmap for i18n).
 - Document new behaviour in both `README.md` and `README.es.md`, and add an entry to `CHANGELOG.md`.
 
@@ -41,6 +47,9 @@ By contributing you agree that your contributions are licensed under the
 ## Español
 
 Los issues y pull requests son bienvenidos en español o en inglés. Antes de abrir un PR ejecuta
-`make lint` y `make test`; cada corrección de errores debe incluir una prueba de regresión. Lee los
+`make lint` y `make test` (y `make test-matrix` si tienes Docker); cada corrección de errores debe incluir
+una prueba de regresión. El CI corre la suite en Ubuntu 22.04, Debian 12 y Ubuntu 24.04 y debe quedar en
+verde en todas. Si encuentras un fallo usando prama con agentes, `prama-agent feedback export <id>` te da
+el cuerpo del issue listo para la plantilla. Lee los
 principios de diseño de arriba y las invariantes de seguridad en
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Documenta los cambios en `README.md` y `README.es.md`.

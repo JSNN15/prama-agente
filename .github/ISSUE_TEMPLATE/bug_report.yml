@@ -1,0 +1,43 @@
+name: Bug report / Reporte de fallo
+description: Something in prama-agent does not work as documented. / Algo de prama-agent no funciona como está documentado.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If one of your agents already reported it, paste the output of `prama-agent feedback export <id>` below and fill in what is missing.
+        Si uno de tus agentes ya lo reportó, pega la salida de `prama-agent feedback export <id>` y completa lo que falte.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened / Qué pasó
+      description: Command, expected result and actual result (exact error text). / Comando, resultado esperado y resultado obtenido (texto exacto del error).
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce / Pasos para reproducirlo
+      placeholder: |
+        1. prama-agent swarm backend --workers agy:2
+        2. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Versions / Versiones
+      description: Output of / Salida de `prama-agent --version; tmux -V; bash --version | head -1`
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent / Agente
+      options: [claude, agy, opencode (experimental), none / ninguno]
+  - type: textarea
+    id: doctor
+    attributes:
+      label: prama-agent doctor
+      description: Optional, output of `prama-agent doctor` (check it has no secrets). / Opcional, salida de `prama-agent doctor` (revisa que no tenga secretos).
+      render: text

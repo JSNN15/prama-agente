@@ -38,7 +38,7 @@ TUI_NOW=0 TUI_LAST_COLLECT=0
 TUI_CRUMBS='' TUI_LIST_CRUMBS=''
 TUI_FILTER='' TUI_FILTER_EDIT=0
 TUI_SEL=0 TUI_SEL_KEY='' TUI_SCROLL=0 TUI_VH=1 TUI_QUIT=0
-TUI_HOST='' TUI_TG_RUNNING=0 TUI_NWORK=0 TUI_LAST_ERR='' TUI_PROMPT_CANCELLED=0
+TUI_HOST='' TUI_TG_RUNNING=0 TUI_FEEDBACK=0 TUI_NWORK=0 TUI_LAST_ERR='' TUI_PROMPT_CANCELLED=0
 TOAST_MSG='' TOAST_KIND=info TOAST_UNTIL=0
 KEY='' MX=0 MY=0 MB=0 ZT=''
 MODAL_TOP=1 MODAL_LEFT=1 MODAL_W=0 MODAL_H=0 MODAL_HINT=''
@@ -802,6 +802,7 @@ tui_collect() {
   done < <(tmx list-panes -a -F '#{session_name}|#{pane_pid}|#{pane_dead}|#{pane_current_command}|#{session_attached}|#{window_active}#{pane_active}|#{pane_current_path}' 2>/dev/null)
   TUI_TG_RUNNING=0
   [ -n "${pinfo[${PRAMA_SESSION_PREFIX}-telegram-bot]+x}" ] && TUI_TG_RUNNING=1
+  TUI_FEEDBACK=$(feedback_open_count 2>/dev/null); TUI_FEEDBACK=${TUI_FEEDBACK:-0}
 
   # Teams first (coordinator, then the agents it launched), then anything else.
   local -A tdepth=() placed=()
@@ -1009,7 +1010,8 @@ _tui_action_meta() {
     cockpit)  A_ICON='▦' A_LABEL='Cockpit'            A_DESC='ver un equipo en vivo, pantalla dividida' ;;
     telegram) A_ICON='➤' A_LABEL='Telegram'           A_DESC='bot 24/7: controla todo desde el móvil'
               (( TUI_TG_RUNNING )) && A_DESC='bot activo · control desde el móvil' ;;
-    doctor)   A_ICON='✱' A_LABEL='Doctor'             A_DESC='diagnóstico y reparación del servidor' ;;
+    doctor)   A_ICON='✱' A_LABEL='Doctor'             A_DESC='diagnóstico y reparación del servidor'
+              (( TUI_FEEDBACK > 0 )) && A_DESC="$TUI_FEEDBACK reporte(s) de fallos de agentes sin revisar" ;;
   esac
 }
 
@@ -1020,7 +1022,8 @@ _tui_arow() {
   R=$T_OFF$base
   _tui_action_meta "$1"
   local dw=$(( cw - 6 - lw - 1 ))
-  if (( dw < 10 )); then
+  # Phones: the label alone reads better than a description cut to a few characters.
+  if (( dw < 10 )) || [ "$TUI_MODE" = compact ]; then
     ui_fit "$A_LABEL" $(( cw - 6 )); lab=$UI_S
     SR="$base $C_NEON$mark$R $C_NEON$A_ICON$R $T_BOLD$lab$R $T_OFF"
   else
@@ -1158,7 +1161,8 @@ _tui_action_body() {
     doctor)
       _tui_para "Diagnóstico y reparación del servidor:"
       BODY+=("" "  $K•$O dependencias y agentes instalados" "  $K•$O clientes tmux colgados o sesiones zombi"
-             "  $K•$O configuración de tmux y botón «◂ MENU»" "  $K•$O metadatos huérfanos" "" "Pulsa $K↵$O para ejecutarlo.")
+             "  $K•$O configuración de tmux y botón «◂ MENU»" "  $K•$O metadatos huérfanos"
+             "  $K•$O reportes de fallos de los agentes (prama-agent feedback list)" "" "Pulsa $K↵$O para ejecutarlo.")
       ;;
   esac
 }

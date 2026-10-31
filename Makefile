@@ -1,9 +1,9 @@
 # prama-agent — developer and install targets
 # Without PREFIX/CONF_DIR, install.sh picks system paths as root (/usr/local, /etc/prama-agent)
 # and user paths otherwise (~/.local, ~/.config/prama-agent).
-SHELL_FILES := bin/prama-agent bin/prama-agy bin/prama-claude lib/*.sh install.sh tests/*.sh
+SHELL_FILES := bin/prama-agent bin/prama-agy bin/prama-claude lib/*.sh install.sh tests/*.sh .github/scripts/*.sh
 
-.PHONY: all install uninstall test lint
+.PHONY: all install uninstall test test-matrix lint
 
 all: lint test
 
@@ -12,10 +12,17 @@ lint:
 	@if command -v shellcheck >/dev/null 2>&1; then \
 	  shellcheck -S warning -x $(SHELL_FILES) && echo "shellcheck: OK"; \
 	else echo "shellcheck no instalado: solo se verificó la sintaxis"; fi
-	@if [ -f lib/telegram_bot.py ]; then python3 -m py_compile lib/telegram_bot.py && echo "py_compile: OK"; fi
+	@python3 -m py_compile lib/telegram_bot.py tests/test_telegram_bot.py && echo "py_compile: OK"
 
 test: lint
+	python3 tests/test_telegram_bot.py
 	bash tests/test_prama_agent.sh
+
+# The CI matrix (tmux 3.2a / 3.3a / 3.4) in local containers: make test-matrix
+test-matrix:
+	@for img in ubuntu:22.04 debian:12 ubuntu:24.04; do \
+	  echo "== $$img"; docker run --rm -v "$$PWD:/src:ro" $$img bash /src/.github/scripts/ci-container.sh || exit 1; \
+	done
 
 install:
 	$(if $(PREFIX),PREFIX="$(PREFIX)") $(if $(CONF_DIR),CONF_DIR="$(CONF_DIR)") bash ./install.sh

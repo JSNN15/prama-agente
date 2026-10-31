@@ -7,7 +7,7 @@
 #   subcmd_swarm <zone> [opts] | stop <zone> | help     coordinator + N workers in one command
 #   subcmd_cockpit [zone|session] [--no-attach]         live split view of a zone's team
 #   cockpit_ensure <zone> [focus_session]               (re)builds the cockpit, prints its name
-#   nav_main <pick|cockpit|next|prev|click> <client> [session] [range]   tmux key bindings
+#   nav_main <pick|cockpit|next|prev|fit|click> <client> [session] [range]   tmux bindings and hooks
 #
 # A team is not a separate object: it is the coordinator of a zone plus the sessions whose
 # PARENT is that coordinator (see prama_team_order). Everything stays a normal prama session,
@@ -249,11 +249,6 @@ subcmd_cockpit() {
     info_msg "Cockpit listo: prama-agent attach $cs"
     return 0
   fi
-  refresh_dimensions
-  if (( ${COLS:-120} < 100 )); then
-    info_msg "Pantalla angosta: el cockpit rinde mejor en tablet o PC. Ctrl+b z agranda el panel con el foco; $PRAMA_NAV_KEY salta entre agentes."
-    sleep 2
-  fi
   type restore_locale >/dev/null 2>&1 && restore_locale
   (( ${IN_TUI:-0} )) && declare -F tui_leave_screen >/dev/null && tui_leave_screen
   tmx_attach "$cs"
@@ -270,10 +265,13 @@ nav_main() {
     cockpit) _nav_cockpit "$client" "$cur" ;;
     next)    _nav_cycle "$client" "$cur" 1 ;;
     prev)    _nav_cycle "$client" "$cur" -1 ;;
+    fit)     _nav_fit "$client" "$cur" ;;
     click)   # status bar buttons; the range comes from #{mouse_status_range}
       case "${4:-}" in
         agents)  _nav_popup "$client" ;;
         cockpit) _nav_cockpit "$client" "$cur" ;;
+        next)    _nav_cycle "$client" "$cur" 1 ;;
+        prev)    _nav_cycle "$client" "$cur" -1 ;;
         *)       tmx detach-client -c "$client" 2>/dev/null ;;
       esac ;;
   esac
@@ -311,8 +309,57 @@ _nav_cockpit() {
   _nav_switch "$client" "$cs"
 }
 
+_nav_is_cockpit() { [[ "$1" == "${PRAMA_SESSION_PREFIX}-cockpit-"* ]]; }
+
+# _nav_client <client> → "session|width" of a client. Read from list-clients: tmux hooks also fire
+# for the nested viewer clients inside cockpit panes, and display-message -c does not resolve
+# the client's own width from run-shell.
+_nav_client() {
+  tmx list-clients -F '#{client_name}|#{session_name}|#{client_width}' 2>/dev/null \
+    | awk -F'|' -v c="$1" '$1 == c { print $2 "|" $3; exit }'
+}
+
+# Cockpit layout for the client's width (tmux hooks: attach, resize, session change). On a phone
+# the focused pane is zoomed, one agent at a time; a wide client gets the split view back, but
+# only when prama zoomed it (a zoom the operator chose with prefix z is left alone).
+_nav_fit() {
+  local client=$1 cs=$2 t info w
+  _nav_is_cockpit "$cs" || return 0
+  info=$(_nav_client "$client")
+  [ "${info%|*}" = "$cs" ] || return 0      # a viewer pane's client, or one that already left
+  w=${info##*|}
+  [[ "$w" =~ ^[0-9]+$ ]] || return 0
+  t="=$cs:"
+  # Zoom is a toggle and several hooks can fire at once (attach + resize): test and toggle in
+  # one tmux command, which the server runs atomically.
+  if (( w < ${PRAMA_COMPACT_COLS:-100} )); then
+    tmx if-shell -F -t "$t" '#{window_zoomed_flag}' '' \
+      "resize-pane -Z -t '$t' ; set-option -w -t '$t' @prama_autozoom 1" 2>/dev/null
+  else
+    tmx if-shell -F -t "$t" '#{&&:#{window_zoomed_flag},#{==:#{@prama_autozoom},1}}' \
+      "resize-pane -Z -t '$t' ; set-option -wu -t '$t' @prama_autozoom" '' 2>/dev/null
+  fi
+  return 0
+}
+
+# Inside a cockpit, next / previous moves the focus between its panes (agents and the bus);
+# on a phone the pane stays zoomed, so ◀ ▶ page through the team one agent at a time.
+_nav_cycle_panes() {
+  local client=$1 cs=$2 dir=$3 i n
+  local -a panes=()
+  mapfile -t panes < <(tmx list-panes -t "=$cs:" -F '#{pane_active} #{pane_id}' 2>/dev/null)
+  n=${#panes[@]}
+  (( n > 1 )) || return 0
+  for (( i = 0; i < n; i++ )); do [[ "${panes[i]}" == 1\ * ]] && break; done
+  (( i >= n )) && i=0
+  local next=${panes[$(( (i + dir + n) % n ))]#* }
+  tmx select-pane -Z -t "$next" 2>/dev/null
+  _nav_fit "$client" "$cs"
+}
+
 _nav_cycle() {
   local client=$1 cur dir=$3 i n
+  if _nav_is_cockpit "$2"; then _nav_cycle_panes "$client" "$2" "$dir"; return 0; fi
   cur=$(_nav_current_agent "$2")
   local -a list=()
   mapfile -t list < <(prama_team_order | cut -d'|' -f1)
