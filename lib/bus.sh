@@ -342,10 +342,26 @@ _bus_status() {
   printf '\n'
 }
 
+# _bus_task_arg <args…> → BUS_TASK (value of --task / -T, a plan task id) and BUS_ARGS (the rest)
+_bus_task_arg() {
+  BUS_TASK='' BUS_ARGS=()
+  while (( $# )); do
+    case $1 in
+      --task|--plan) BUS_TASK=${2:-}; shift 2 || shift ;;
+      *) BUS_ARGS+=("$1"); shift ;;
+    esac
+  done
+  [ -z "$BUS_TASK" ] || [[ $BUS_TASK =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,15}$ ]] || die "$(_t 'Invalid task id: %s' "$BUS_TASK")"
+}
+
 _bus_assign() {
+  _bus_task_arg "$@"
+  set -- "${BUS_ARGS[@]}"
   local target=${1:-}
   (( $# )) && shift
-  local msg="$*"
+  local msg="$*" task=$BUS_TASK
+  # A plan task: the message carries its id, and the task moves to "in progress" for the target.
+  [ -n "$task" ] && [ -n "$msg" ] && msg="[$task] $msg"
   [ -n "$target" ] && [ -n "$msg" ] || die "$(_t 'Usage: prama-agent bus assign <session|role> "<instruction>"')"
   local sender
   sender=$(_bus_sender)
@@ -370,6 +386,9 @@ _bus_assign() {
   fi
   [ -n "$BUS_TARGET_NOTE" ] && info_msg "$BUS_TARGET_NOTE"
   local dest=$BUS_TARGET
+  if [ -n "$task" ] && declare -F plan_bus_hook >/dev/null; then
+    plan_bus_hook assign "$task" "$dest" || warn "$(_t 'The task was sent, but plan task %s could not be updated.' "$task")"
+  fi
 
   if [ "$(session_role "$dest")" = daemon ]; then
     queue_push "$dest" "$msg"
@@ -392,7 +411,13 @@ _bus_assign() {
 }
 
 _bus_report() {
-  local msg="$*"
+  _bus_task_arg "$@"
+  local msg="${BUS_ARGS[*]}"
+  if [ -n "$BUS_TASK" ]; then
+    msg="[$BUS_TASK] $msg"
+    declare -F plan_bus_hook >/dev/null && { plan_bus_hook report "$BUS_TASK" "$(_bus_sender)" "$msg" \
+      || warn "$(_t 'Reported, but plan task %s could not be updated.' "$BUS_TASK")"; }
+  fi
   [ -n "$msg" ] || die "$(_t 'Usage: prama-agent bus report "<result summary>"')"
   local sender coord=''
   sender=$(_bus_sender)

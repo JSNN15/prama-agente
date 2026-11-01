@@ -302,6 +302,15 @@ class Prama:
         return [d for d in self.json(["worktree", "status", coord, "--json"])
                 if isinstance(d, dict) and isinstance(d.get("branch"), str)]
 
+    def plan(self, coord):
+        """The team's plan (prama-agent plan <coord> json): {"rev":…, "tasks":[…]}."""
+        out = self.ok(["plan", coord, "json"], timeout=20)
+        try:
+            data = json.loads(out)
+        except ValueError:
+            raise CliError(_("invalid JSON output from: prama-agent %s") % "plan json")
+        return data if isinstance(data, dict) else {}
+
     def notify_state(self):
         """(level, mute_until) of the Telegram notifications."""
         out = self.ok(["telegram", "alerts", "--porcelain"]).strip()
@@ -644,7 +653,7 @@ class Bot:
         add = [self.b("➕ 1 %s" % a, "ta:%s:%s" % (cs, a)) for a in self.prama.agents()[:3]]
         if add:
             kb.append(add)
-        kb.append([self.b(_("🧠 Memory"), "M:" + cs), self.b(_("⎇ Branches"), "B:" + cs)])
+        kb.append([self.b(_("📋 Plan"), "P:" + cs), self.b(_("🧠 Memory"), "M:" + cs), self.b(_("⎇ Branches"), "B:" + cs)])
         kb.append([self.b(_("🛑 Close team"), "tx:" + cs), self.b("🔄", "T:" + cs)])
         kb.append([self.b(_("⬅ Teams"), "T"), self.b(_("☰ Menu"), "m")])
         return "\n".join(lines), kb
@@ -794,6 +803,42 @@ class Bot:
         kb = [[self.b(_("✍️ Add a note"), "Mn:" + cs), self.b(_("🔄 Update"), "M:" + cs)],
               [self.b(_("⬅ Team"), "T:" + cs), self.b(_("☰ Menu"), "m")]]
         return "\n".join(lines), kb
+
+    def view_plan(self, cs):
+        """The team's plan by status, with progress and the honesty flags (stale, no evidence…)."""
+        team = teams_of(self.prama.fleet()).get(cs)
+        if not team:
+            return self.view_teams(_("⚠️ That team no longer exists."))
+        plan = self.prama.plan(cs)
+        tasks = [t for t in plan.get("tasks", []) if isinstance(t, dict)]
+        live = [t for t in tasks if t.get("status") != "dropped"]
+        done = sum(1 for t in live if t.get("status") == "done")
+        pct = int(done * 100 / len(live)) if live else 0
+        bar = "▰" * (pct // 10) + "▱" * (10 - pct // 10)
+        lines = [_("<b>📋 Plan · %s</b> · r%s") % (e(team_label(team[0])), e(plan.get("rev", 1))),
+                 "%s %d%% · %s" % (bar, pct, _("%d of %d done") % (done, len(live))), ""]
+        icons = {"doing": "▶️", "review": "🔎", "blocked": "⛔", "todo": "▫️", "done": "✅"}
+        heads = {"doing": _("In progress"), "review": _("Review"), "blocked": _("Blocked"),
+                 "todo": _("To do"), "done": _("Done")}
+        flagtxt = {"stale": _("⚠️ no activity"), "unverified": _("❓ no evidence"), "orphan": _("✝ owner gone"),
+                   "ready": _("🟢 ready")}
+        for st in ("doing", "review", "blocked", "todo", "done"):
+            group = [t for t in tasks if t.get("status") == st]
+            if not group:
+                continue
+            lines.append("<b>%s %s</b>" % (icons[st], e(heads[st])))
+            for t in group[:MAX_LISTED]:
+                flags = [flagtxt[f] for f in str(t.get("flags", "")).split() if f in flagtxt]
+                if any(f.startswith("overlap:") for f in str(t.get("flags", "")).split()):
+                    flags.append(_("⇄ same files"))
+                prog = " %s%%" % e(t["progress"]) if st == "doing" and t.get("progress") else ""
+                meta = " · ".join(x for x in (e(t.get("owner", "")), prog.strip(), " ".join(flags)) if x)
+                lines.append("  <code>%s</code> %s%s" % (e(t.get("id", "")), e(t.get("title", "")),
+                                                        ("\n     <i>%s</i>" % meta) if meta else ""))
+            lines.append("")
+        if not tasks:
+            lines.append(_("<i>No plan yet. The coordinator builds it with prama-agent plan add; ask it from 💬 Talk.</i>"))
+        return "\n".join(lines), [[self.b(_("🔄 Update"), "P:" + cs), self.b(_("⬅ Team"), "T:" + cs)]]
 
     def view_branches(self, cs):
         """Isolated team: each executor's branch, what is left to merge, uncommitted work."""
@@ -1033,6 +1078,8 @@ class Bot:
                              [[self.b(_("✖ Cancel"), "d")]], edit_id=mid)
         if act == "M":
             return self.send(*self.view_memory(arg), edit_id=mid)
+        if act == "P":
+            return self.send(*self.view_plan(arg), edit_id=mid)
         if act == "B":
             return self.send(*self.view_branches(arg), edit_id=mid)
         if act == "Mn":                     # a note for a team's memory: the next text

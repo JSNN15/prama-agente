@@ -50,6 +50,10 @@ build_role_system_prompt() {
 
 # Paragraphs that depend on the team: isolation (worktrees) and closing. Read the locals above.
 _role_extra_en() {
+  local plan_x="
+Plan tasks: an assignment that starts with an id ([T3] …) is a task of the team plan. Report it with
+'prama-agent bus report \"<summary and evidence>\" --task T3'; long tasks can show progress with
+'prama-agent plan set T3 progress=50'."
   if [ "$role" = executor ] && [ -n "$wt_branch" ]; then
     wt_text="
 You work in your OWN git worktree on branch '$wt_branch' (created from '${wt_base:-the zone branch}');
@@ -75,6 +79,14 @@ Split work so executors touch different files; merge ONE branch at a time, with 
 after each merge ask the others to sync. Never let an executor merge into '$wt_base' itself."
     fi
     close_text="
+The team plan (the operator watches it live as a board and a timeline: keep it true):
+- Build it before delegating: prama-agent plan add \"<task>\" --deps T1 --est 30m --scope \"src/x/**\" --accept \"<check>\"
+- Delegate a task: prama-agent bus assign <session> \"<instruction>\" --task T3   (it becomes in progress)
+- Close it only when verified: prama-agent plan done T3 --evidence \"<test and result, commit>\"
+  (or plan block T3 \"<why>\" / plan drop T3 \"<why>\")
+- When the plan changes: prama-agent plan replan \"<reason>\", then add, drop or re-assign tasks.
+- See it: prama-agent plan · prama-agent plan timeline. prama alerts you about stale tasks, tasks done
+  without evidence, ready tasks nobody has and tasks touching the same files.
 How to run the team (what works in multi-agent studies):
 - Plan before delegating: split the objective into tasks with explicit dependencies and, as far as
   possible, disjoint files. Each assignment says the goal, the files it may touch, the expected output
@@ -88,9 +100,14 @@ Closing: 'prama-agent fleet kill <session>' closes one of your agents. When the 
 reported (or the operator asks), 'prama-agent swarm stop $session_name' closes your whole team, you
 last; merged worktrees are removed, unmerged work is kept. Save what matters to the team memory first."
   fi
+  [ "$role" = executor ] && wt_text+=$plan_x
 }
 
 _role_extra_es() {
+  local plan_x="
+Tareas del plan: un encargo que empieza con un id ([T3] …) es una tarea del plan del equipo. Repórtala
+con 'prama-agent bus report \"<resumen y evidencia>\" --task T3'; en tareas largas muestra el avance con
+'prama-agent plan set T3 progress=50'."
   if [ "$role" = executor ] && [ -n "$wt_branch" ]; then
     wt_text="
 Trabajas en TU PROPIO git worktree en la rama '$wt_branch' (creada desde '${wt_base:-la rama de la zona}');
@@ -116,6 +133,14 @@ tests ('prama-agent worktree merge <sesión> --test \"<comando de tests>\"' desh
 después de cada merge pide a los demás que hagan sync. Nunca dejes que un ejecutor integre en '$wt_base'."
     fi
     close_text="
+El plan del equipo (el operador lo mira en vivo como tablero y línea de tiempo: mantenlo fiel):
+- Ármalo antes de delegar: prama-agent plan add \"<tarea>\" --deps T1 --est 30m --scope \"src/x/**\" --accept \"<verificación>\"
+- Delega una tarea: prama-agent bus assign <sesión> \"<instrucción>\" --task T3   (queda en curso)
+- Ciérrala solo verificada: prama-agent plan done T3 --evidence \"<test y resultado, commit>\"
+  (o plan block T3 \"<por qué>\" / plan drop T3 \"<por qué>\")
+- Si el plan cambia: prama-agent plan replan \"<motivo>\", y luego agrega, quita o reasigna tareas.
+- Míralo: prama-agent plan · prama-agent plan timeline. prama te avisa de tareas estancadas, listas sin
+  evidencia, listas para empezar sin dueño y tareas que tocan los mismos archivos.
 Cómo llevar el equipo (lo que funciona según los estudios de sistemas multiagente):
 - Planifica antes de delegar: divide el objetivo en tareas con dependencias explícitas y, en lo posible,
   archivos distintos. Cada encargo dice el objetivo, los archivos que puede tocar, el resultado esperado y
@@ -130,6 +155,7 @@ reportado (o el operador lo pida), 'prama-agent swarm stop $session_name' cierra
 final; los worktrees integrados se borran y el trabajo sin integrar se conserva. Antes guarda lo
 importante en la memoria del equipo."
   fi
+  [ "$role" = executor ] && wt_text+=$plan_x
 }
 
 # _role_prompt_en / _role_prompt_es — the role prompt text; they read the locals of
@@ -499,7 +525,12 @@ _runner_env() {
   local s=$1 agent=$2 perm=$3 role=$4 zone=$5 rp=''
   PRESET=$(state_get "$s" PRESET) AGENT_MODEL=$(state_get "$s" MODEL)
   [ -n "$PRESET" ] && preset_load "$PRESET" >/dev/null 2>&1
-  [ "$role" != executor ] && rp=$(build_role_system_prompt "$role" "$s" "$zone")
+  # Same rule as launch_agent: executors of a team keep their prompt (and branch) on a restart.
+  local parent; parent=$(state_get "$s" PARENT)
+  if [ "$role" != executor ] || { [ -n "$parent" ] && [ "$(session_role "$parent")" = coordinator ]; }; then
+    local c; c=$(session_team "$s" 2>/dev/null) || c=''
+    rp=$(PRAMA_WT_BRANCH=$(state_get "$s" WORKTREE) PRAMA_TEAM_BASE=${c:+$(state_get "$c" BASE)}          PRAMA_TEAM_ISOLATE=$(state_get "$s" ISOLATE 0) build_role_system_prompt "$role" "$s" "$zone")
+  fi
   agent_runtime_env "$agent" "$s" "$perm" "$rp"
 }
 
@@ -581,7 +612,8 @@ internal_runner() {
     if (( pending > 0 )); then
       box_row "$C_BORDER_HI" "${C_BRASS}$(_t '▲ %d queued task(s):' "$pending")${C_OFF} prama-agent bus inbox $session_name"
     fi
-    box_bottom "$(_t '%s menu · wheel/Ctrl+b [ scroll · %s' "$PRAMA_MENU_KEY" "$target_dir")" "$C_BORDER_HI"
+    local mk=${PRAMA_MENU_KEY//M-/Alt+}; mk=${mk//C-/Ctrl+}
+    box_bottom "$(_t '%s menu · wheel/Ctrl+b [ scroll · %s' "$mk" "${target_dir/#$HOME/\~}")" "$C_BORDER_HI"
     printf '\n'
 
     exit_code=0

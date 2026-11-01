@@ -48,7 +48,7 @@ declare -ga TUI_FRAME=() TUI_PREV=() TUI_ZONES=() TUI_KEYS=() TUI_KEYS_R=() HUB_
 declare -ga S_NAME=() S_PID=() S_DEAD=() S_CMD=() S_ATT=() S_PATH=() S_STATE=() S_ROLE=()
 declare -ga S_CPU=() S_MEM=() S_ETIME=() S_COMM=() PV=() LP=() RP=()
 declare -ga S_TREE=() S_TCOLOR=() S_NMEM=()
-declare -gA TUI_HIT=() TUI_ROLE_CACHE=() TUI_MCACHE=() TUI_VISIBLE=() TUI_TLABEL=() TUI_OBJ=()
+declare -gA TUI_HIT=() TUI_ROLE_CACHE=() TUI_MCACHE=() TUI_VISIBLE=() TUI_TLABEL=() TUI_OBJ=() TUI_PLAN=() TUI_PLKEY=()
 
 # ── Styles (attribute-only fallbacks keep focus visible under NO_COLOR) ─────
 tui_styles() {
@@ -1128,7 +1128,7 @@ _tui_action_meta() {
   case $1 in
     new)      A_ICON='✚'; _tv A_LABEL 'New agent'; _tv A_DESC '%s in a zone' "${AGENTS[*]}" ;;
     swarm)    A_ICON='❖'; _tv A_LABEL 'New team'; _tv A_DESC 'coordinator + N agents in a zone' ;;
-    teams)    A_ICON='☷'; _tv A_LABEL 'Teams'; _tv A_DESC 'manage teams: cockpit, message, add agents, close'
+    teams)    A_ICON='▤'; _tv A_LABEL 'Teams'; _tv A_DESC 'manage teams: cockpit, message, add agents, close'
               (( TUI_NTEAMS > 0 )) && _tv A_DESC '%d team(s) running · manage, message, grow, close' "$TUI_NTEAMS" ;;
     cockpit)  A_ICON='▦'; A_LABEL='Cockpit'; _tv A_DESC 'watch a team live, split screen' ;;
     telegram) A_ICON='➤'; A_LABEL='Telegram'; _tv A_DESC '24/7 bot: control everything from your phone'
@@ -1385,6 +1385,10 @@ _tui_hub_detail() {
       _tv tx '❖ team %s · %d agent(s)' "${TUI_TLABEL[$s]:-$s}" "${S_NMEM[si]:-0}"
       [ -n "$obj" ] && tx+="  $C_MUTED◎ $obj"
       mt=("${S_TCOLOR[si]}$tx$T_OFF")
+      if [ "${TUI_PLKEY[$s]:-}" != "$TUI_LAST_COLLECT" ]; then
+        TUI_PLKEY[$s]=$TUI_LAST_COLLECT; plan_summary "$s"; TUI_PLAN[$s]=$PLAN_SUM
+      fi
+      [ -n "${TUI_PLAN[$s]}" ] && mt+=("$C_MUTED📋 ${TUI_PLAN[$s]}$T_OFF")
     fi
     if [ "$TUI_MODE" = compact ]; then
       _tv hint '↵ enter'
@@ -1585,6 +1589,9 @@ _tui_session_action() {
       fi ;;
   esac
 }
+
+# Live plan of a team, full screen (v toggles board and timeline, q returns).
+_tui_plan_watch() { _plan_target "$1" ''; plan_watch; }
 
 # _tui_team_members <coordinator> → TM (sessions whose PARENT is it)
 _tui_team_members() {
@@ -1803,8 +1810,10 @@ _tui_team_menu() {
   label=$(team_label "$c")
   _tv l_menu 'Menu'; _tv l_teams 'Teams'
   while tmx_has "$c"; do
-    local -a AL=() AM=() AA=() AT=() AK=(cockpit msg grow memory note)
+    local -a AL=() AM=() AA=() AT=() AK=(plan cockpit msg grow memory note)
     _tui_team_members "$c"
+    plan_summary "$c"
+    _tv tx '📋 Plan (live)';                 AL+=("$tx"); AM+=("${PLAN_SUM:-$(_t 'board and timeline of the tasks; the coordinator keeps it')}")
     _tv tx '▦ Open the cockpit';            AL+=("$tx"); _tv tx 'live split view: coordinator, agents and bus'; AM+=("$tx")
     _tv tx '✉ Message the coordinator';     AL+=("$tx"); _tv tx 'a new objective, a question, a change of plan'; AM+=("$tx")
     _tv tx '✚ Add agents';                  AL+=("$tx"); _tv tx 'more workers for this team (they report to its coordinator)'; AM+=("$tx")
@@ -1812,7 +1821,7 @@ _tui_team_menu() {
     _tv tx '🧠 Team memory (%d)' "$nm";     AL+=("$tx"); _tv tx 'decisions and findings the agents keep; read them in full'; AM+=("$tx")
     _tv tx '✎ Add a note';                  AL+=("$tx"); _tv tx 'a decision or convention every agent of the team will read'; AM+=("$tx")
     if team_isolated "$c"; then
-      _tv tx '⎇ Branches';                  AL+=("$tx"); _tv tx "each executor's branch: commits to merge, uncommitted, behind"; AM+=("$tx"); AK+=(branches)
+      _tv tx '⇄ Branches';                  AL+=("$tx"); _tv tx "each executor's branch: commits to merge, uncommitted, behind"; AM+=("$tx"); AK+=(branches)
     fi
     AK+=(enter close)
     _tv tx '↗ Enter the coordinator';       AL+=("$tx"); _tv tx 'talk to it directly; %s brings you back' "${PRAMA_MENU_KEY//M-/Alt+}"; AM+=("$tx")
@@ -1828,6 +1837,8 @@ _tui_team_menu() {
                if ! _tui_run_fullscreen 1 subcmd_cockpit "$c"; then _tv tx 'Could not open the cockpit'; tui_alert "$tx" "${TUI_LAST_ERR:-$c}"; fi ;;
       msg)     TUI_ROLE_CACHE[$c]=coordinator; _tui_task "$c" ;;
       grow)    _tui_team_grow "$c" ;;
+      plan)    TUI_LIST_CRUMBS=''; tui_invalidate
+               _tui_run_fullscreen 0 _tui_plan_watch "$c" || true ;;
       branches) tui_suspend
                { wt_status "$c"; printf '\n'; } 2>&1 | less -R "-Ps$label  (q) " 2>/dev/null
                tui_resume ;;

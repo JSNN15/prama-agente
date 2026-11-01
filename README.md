@@ -18,29 +18,24 @@ billing problem.
 
 It is plain bash on top of a dedicated tmux server: no daemon to install, no database, no Node.js.
 
-```
- ◆ PRAMA AGENT v6.5.0  server-01                          ● 6 active   LOAD 1.63 · RAM 5120M (21%)
- Next agent ›  o  Role ✦ executor   y  Permissions ● ASK   e  Remote off   p  Profile default
-╭─ Agents and teams ───────────────────────── 6 ─╮╭─ ◉ prama-backend-sec-coord ────────────────────╮
-│   ● ▍ backend · docs (1)   ready     ▱▱▱▱   0% ││ ❖ coordinator · ● ready · CPU 0% · 99M · up 0… │
-│   ● └ agy          ✦ exec  ready     ▱▱▱▱   0% ││ ⌂ ~/src/backend  ⎇ main                        │
-│ ▸ ● ▍ backend · sec (2)    ready     ▱▱▱▱   0% ││ ❖ team backend · sec · 2 agent(s)  ◎ Audit au… │
-│   ● ├ agy          ✦ exec  ready     ▱▱▱▱   0% │├─ live ─────────────────────────────────────────┤
-│   ● └ agy-2        ✦ exec  ready     ▱▱▱▱   0% ││  ╭─ ✦ PRAMA AGENT // prama-backend-sec-coord … │
-│   ● claude-web     ✦ exec  ready     ▱▱▱▱   0% ││  │ ❖ COORDINATOR · claude · profile default ·… │
-│                                                ││ —    │                                         │
-│                                                ││  ╰── M-m menu · wheel/Ctrl+b [ scroll · ~/src… │
-├─ Actions ──────────────────────────────────────┤│                                                │
-│   ✚ New agent            claude agy in a zone  ││ ╭─ Claude Code ─╮                              │
-│   ❖ New team             coordinator + N agen… ││ > review the JWT rotation in auth/keys.ts      │
-│   ☷ Teams                2 team(s) running · … ││ ⏺ Delegating the key audit to prama-backend-s… │
-│   ▦ Cockpit              watch a team live, s… ││                                                │
-│   ➤ Telegram             24/7 bot: control ev… ││                                                │
-│   ✱ Doctor               server diagnosis and… ││                                                │
-│   ⚙ Preferences          language English · t… ││                                                │
-╰────────────────────────────────────────────────╯╰─── ↵ enter · t message · + agents · c cockpit ─╯
-  ↵  enter  t  message  +  agents  c  cockpit  x  close team  m  teams  n  new     ?  help  q  quit
-```
+<p align="center">
+  <img src="docs/img/menu-en.png" alt="The prama-agent menu: teams grouped with their agents, live preview of the selected one" width="900">
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/img/plan-board-en.png" alt="Live plan board"><br><sub><b>Live plan board</b> — what the coordinator planned, who has each task, what is stale or unverified.</sub></td>
+    <td width="50%"><img src="docs/img/plan-timeline-en.png" alt="Plan timeline"><br><sub><b>Timeline</b> — real work per agent, the estimate left, re-plans marked on the axis.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/img/teams-en.png" alt="Team actions"><br><sub><b>Teams</b> — plan, cockpit, message, add agents, memory, branches, close.</sub></td>
+    <td><img src="docs/img/plan-html-en.png" alt="HTML export of the plan"><br><sub><b>HTML export</b> — <code>prama-agent plan html</code>: board, timeline and tasks in one file.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/img/help-en.png" alt="Keyboard help"><br><sub><b>Every shortcut</b>, grouped by task (<code>?</code>).</sub></td>
+    <td align="center"><img src="docs/img/phone-en.png" alt="On a phone" width="300"><br><sub><b>On a phone</b> — the same menu, stacked, with tap targets.</sub></td>
+  </tr>
+</table>
 
 **English and Spanish, seven color themes.** The whole tool speaks both languages: menu, CLI, the
 agents' role prompts (so agents report in your language), the Telegram bot. It follows your locale
@@ -48,6 +43,73 @@ agents' role prompts (so agents report in your language), the Telegram bot. It f
 (midnight, ocean, forest, ember, violet, light for light terminals, mono for high contrast); they paint
 the menu, the tmux status bar of every agent and the fzf inspector. Both are also in the menu, under
 **⚙ Preferences** (`,`), where moving through the themes previews them live.
+
+## How it fits together
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"ui-sans-serif, system-ui","fontSize":"15px","lineColor":"#94a3b8","edgeLabelBackground":"#ffffff","clusterBkg":"#f8fafc","clusterBorder":"#cbd5e1","titleColor":"#334155"}}}%%
+flowchart LR
+  you(["👤 You<br/>menu · CLI · Telegram"]):::human
+  subgraph team["Team «sec» · zone backend"]
+    direction TB
+    coord["❖ Coordinator<br/>plans · reviews · merges"]:::coord
+    execs["✦ Executors<br/>each on its own git branch"]:::exec
+    coord -- "tasks  [T2]" --> execs
+    execs -- "reports + evidence" --> coord
+  end
+  plan[("📋 Live plan")]:::data
+  mem[("🧠 Team memory")]:::data
+  repo[("⎇ main")]:::repo
+  wd{{"🛡 Watchdog"}}:::guard
+
+  you -- "objective" --> coord
+  coord -- "add · done · replan" --> plan
+  team -. "decisions" .-> mem
+  execs -- "commits" --> repo
+  coord -- "merge --test" --> repo
+  wd -- "watches" --> team
+  wd -- "stale · no evidence" --> plan
+  wd -- "📱 alerts" --> you
+  plan -- "board · timeline" --> you
+
+  classDef human fill:#f59e0b,stroke:#b45309,color:#fff
+  classDef coord fill:#a855f7,stroke:#7e22ce,color:#fff
+  classDef exec fill:#0ea5e9,stroke:#0369a1,color:#fff
+  classDef data fill:#10b981,stroke:#047857,color:#fff
+  classDef guard fill:#ef4444,stroke:#b91c1c,color:#fff
+  classDef repo fill:#334155,stroke:#0f172a,color:#fff
+```
+
+A task, from plan to `main`:
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"ui-sans-serif, system-ui","actorBkg":"#a855f7","actorTextColor":"#ffffff","actorBorder":"#7e22ce","signalColor":"#475569","signalTextColor":"#0f172a","noteBkgColor":"#fef3c7","noteBorderColor":"#f59e0b","activationBkgColor":"#e0f2fe"}}}%%
+sequenceDiagram
+  autonumber
+  actor You
+  participant C as ❖ Coordinator
+  participant P as 📋 Plan
+  participant E as ✦ Executor (own branch)
+  participant G as ⎇ git main
+  participant W as 🛡 Watchdog
+  You->>C: swarm backend --team sec --task "Harden auth"
+  C->>P: plan add T1…T5 (deps, files, estimate, check)
+  C->>E: bus assign … --task T2
+  Note over P: T2 → in progress (owner agy)
+  E->>E: code + tests, commits on prama/sec/agy
+  E->>C: bus report "14 passed" --task T2
+  Note over P: T2 → review
+  C->>G: worktree merge agy --test "pytest -q"
+  alt tests pass
+    G-->>C: merged into main
+    C->>P: plan done T2 --evidence "pytest 14 passed"
+  else tests fail or conflict
+    G-->>C: merge undone, main unchanged
+    C->>E: fix it · worktree sync
+  end
+  W-->>C: T4 shows no activity for 20 min
+  W-->>You: 📱 alert with [View] [Talk] [Restart]
+```
 
 ## Why
 
@@ -78,7 +140,7 @@ New here? **[Getting started](docs/GETTING_STARTED.md)** goes from an empty serv
 including sign-in, models and zones.
 
 Without `sudo` it installs for the current user (`~/.local/bin`, `~/.config/prama-agent`). From a clone:
-`sudo make install` or `make install`. Update later with `prama-agent update` (or `update v6.5.0`).
+`sudo make install` or `make install`. Update later with `prama-agent update` (or `update v6.6.0`).
 Tested on Ubuntu 22.04 / 24.04 and Debian 12 (tmux 3.2a, 3.3a and 3.4), with any login shell.
 
 Requirements: bash ≥ 4.4, tmux ≥ 3.2 (3.3+ for clickable status-bar buttons and the phone layout), git. Recommended: `jq`
@@ -203,6 +265,56 @@ own team). The coordinator's brief says how many notes are waiting, so a restart
 worker picks the work up where it was. Notes live on the server (`~/.local/state/prama-agent/memory`,
 mode `0700`), redacted like bug reports, newest `PRAMA_MEMORY_MAX_LINES` (200) kept; only the operator
 can clear one. The menu (**Teams → Team memory**) and Telegram (**🧠 Memory**) show and add notes too.
+
+## The live plan
+
+You should not have to ask the coordinator what it is doing. It keeps the team's plan with one-line
+commands, prama shows it live, and the watchdog checks it against what the agents actually do.
+
+```bash
+prama-agent plan add "Rotate the JWT keys" --deps T1 --est 90m --scope "src/auth/keys.py" --accept "pytest tests/auth"
+prama-agent bus assign prama-backend-sec-agy "Rotate the keys, no downtime" --task T2   # T2 → in progress
+prama-agent bus report "14 passed @3f9c2a1" --task T2                                     # (executor) T2 → review
+prama-agent plan done T2 --evidence "pytest tests/auth: 14 passed"
+prama-agent plan replan "The audit asks for rate limiting first"                          # r2, kept in the history
+prama-agent plan backend --team sec            # board  ·  plan timeline  ·  plan log  ·  plan html
+```
+
+- **Board and timeline, live**: in the team's cockpit (a pane of its own), in the menu (**Teams →
+  📋 Plan**, `v` switches views), in Telegram (team → **📋 Plan**) and as a self-contained HTML file.
+- **Made for plans that change**: every re-plan is a numbered revision with its reason, marked on the
+  timeline (↻) and on the tasks it touched (Δ); the history is never rewritten.
+- **Honest by construction** (what the studies found to matter): a task *in progress* whose owner
+  shows no activity is flagged **stale**, *done* without evidence is **unverified**, two tasks in
+  progress on the same files are **overlapping**, and a task whose dependencies are done but nobody
+  has is **ready**. The watchdog tells the coordinator, once an hour per task.
+- Only the coordinator (or you) changes the plan; an executor moves its own task (progress, report).
+
+How a task moves:
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"ui-sans-serif, system-ui","primaryColor":"#e0f2fe","primaryBorderColor":"#0284c7","primaryTextColor":"#0f172a","lineColor":"#64748b","edgeLabelBackground":"#ffffff"}}}%%
+stateDiagram-v2
+  direction LR
+  [*] --> todo: plan add
+  todo --> doing: bus assign --task · plan start
+  doing --> review: bus report --task
+  review --> doing: changes requested
+  review --> done: plan done --evidence
+  doing --> blocked: plan block
+  blocked --> doing: unblocked
+  todo --> dropped: plan drop
+  doing --> dropped: plan drop
+  done --> [*]
+  note right of doing
+    the watchdog flags it as stale
+    when its owner shows no activity
+  end note
+  note right of done
+    without evidence it shows as
+    unverified until it gets one
+  end note
+```
 
 ## On your phone
 

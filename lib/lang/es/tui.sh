@@ -320,6 +320,6 @@ I18N+=(
   ['▣ Shared folder']='▣ Carpeta compartida'
   ['everyone edits the zone folder (fine for one executor or read-only work)']='todos editan la carpeta de la zona (sirve para un ejecutor o trabajo de solo lectura)'
   ['How will the team work on the code?']='¿Cómo trabajará el equipo sobre el código?'
-  ['⎇ Branches']='⎇ Ramas'
+  ['⇄ Branches']='⇄ Ramas'
   ["each executor's branch: commits to merge, uncommitted, behind"]='la rama de cada ejecutor: commits por integrar, sin commit, atraso'
 )
