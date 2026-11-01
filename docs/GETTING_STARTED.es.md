@@ -19,8 +19,8 @@ Paquetes recomendados: `sudo apt install tmux git jq` (y `mosh` si te vas a cone
 ## 2. Instala prama-agent
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agente/main/install.sh | sudo bash   # para todo el sistema
-curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agente/main/install.sh | bash        # solo para tu usuario
+curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agent/main/install.sh | sudo bash   # para todo el sistema
+curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agent/main/install.sh | bash        # solo para tu usuario
 ```
 
 ## 3. Ejecuta el asistente
@@ -122,4 +122,4 @@ Ver la sección «Desde el celular» del README.
   `trust`, `model`).
 - Los agentes reportan solos los fallos de prama-agent (`prama-agent feedback list`);
   `feedback export <id>` te da el cuerpo de un issue para
-  [GitHub](https://github.com/JSNN15/prama-agente/issues).
+  [GitHub](https://github.com/JSNN15/prama-agent/issues).

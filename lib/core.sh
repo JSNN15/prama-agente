@@ -8,6 +8,9 @@
 
 shopt -s extglob
 
+# shellcheck source=lib/i18n.sh
+source "${BASH_SOURCE[0]%/*}/i18n.sh"
+
 # ── Defaults (overridable from config.env or the environment) ───────────────
 PRAMA_BRAND="${PRAMA_BRAND:-PRAMA AGENT}"
 PRAMA_SESSION_PREFIX="${PRAMA_SESSION_PREFIX:-prama}"
@@ -21,6 +24,8 @@ PRAMA_MENU_KEY="${PRAMA_MENU_KEY:-M-m}"                 # key that detaches back
 PRAMA_NAV_KEY="${PRAMA_NAV_KEY:-M-a}"                   # agent picker popup
 PRAMA_COCKPIT_KEY="${PRAMA_COCKPIT_KEY:-M-c}"           # team cockpit ⇄ agent
 PRAMA_COMPACT_COLS="${PRAMA_COMPACT_COLS:-100}"         # narrower clients (phones) get the compact layout
+PRAMA_LANG="${PRAMA_LANG:-auto}"                        # interface language: en | es | auto (from the locale)
+PRAMA_THEME="${PRAMA_THEME:-midnight}"                  # color theme (prama-agent theme lists them)
 PRAMA_HOOKS="${PRAMA_HOOKS:-1}"                         # inject state hooks into claude sessions
 PRAMA_WATCHDOG="${PRAMA_WATCHDOG:-1}"                   # auto-start the fleet watchdog on launch
 PRAMA_WATCH_INTERVAL="${PRAMA_WATCH_INTERVAL:-5}"
@@ -91,6 +96,10 @@ prama_load_config() {
   # Re-derive paths in case config.env overrode their inputs.
   PRAMA_BUS_DIR="${PRAMA_BUS_DIR:-$PRAMA_STATE_HOME/bus}"
   PRAMA_TMUX_CONF="${PRAMA_TMUX_CONF:-$PRAMA_STATE_HOME/tmux.conf}"
+  # Language and theme may come from config.env: reload the catalog and the palette.
+  i18n_init
+  if declare -F ui_init_theme >/dev/null; then ui_init_theme; fi
+  if declare -F tui_styles >/dev/null; then tui_styles; fi
 }
 
 # zones.conf: zones registered with `prama-agent zones add` (or `setup`), one "name|dir|description"

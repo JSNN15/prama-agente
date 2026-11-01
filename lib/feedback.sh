@@ -194,7 +194,7 @@ _feedback_show() {
   sed 's/^/  │ /' "$d/body.md"
   if [ -s "$d/events.jsonl" ]; then printf '\n  Últimos eventos del agente:\n'; sed 's/^/    /' "$d/events.jsonl"; fi
   printf '\n'
-  info_msg "Publicar como issue: prama-agent feedback export $id | gh issue create -R ${PRAMA_ISSUES_REPO:-JSNN15/prama-agente} -t \"<título>\" -F -"
+  info_msg "Publicar como issue: prama-agent feedback export $id | gh issue create -R ${PRAMA_ISSUES_REPO:-JSNN15/prama-agent} -t \"<título>\" -F -"
   info_msg "Marcar como atendido: prama-agent feedback close $id"
 }
 

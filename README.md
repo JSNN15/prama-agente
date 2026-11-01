@@ -2,12 +2,12 @@
 
 **English** · [Español](README.es.md)
 
-[![CI](https://github.com/JSNN15/prama-agente/actions/workflows/ci.yml/badge.svg)](https://github.com/JSNN15/prama-agente/actions/workflows/ci.yml)
+[![CI](https://github.com/JSNN15/prama-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/JSNN15/prama-agent/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![bash ≥ 4.4](https://img.shields.io/badge/bash-%E2%89%A5%204.4-4EAA25)
 ![tmux ≥ 3.2](https://img.shields.io/badge/tmux-%E2%89%A5%203.2-1BB91F)
-![Release](https://img.shields.io/github/v/release/JSNN15/prama-agente)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/JSNN15/prama-agente/badge)](https://scorecard.dev/viewer/?uri=github.com/JSNN15/prama-agente)
+![Release](https://img.shields.io/github/v/release/JSNN15/prama-agent)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/JSNN15/prama-agent/badge)](https://scorecard.dev/viewer/?uri=github.com/JSNN15/prama-agent)
 
 **A terminal control plane for CLI coding agents.** prama-agent launches, supervises and coordinates
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and Google Antigravity (`agy`) across
@@ -56,7 +56,7 @@ connection dropped. prama-agent turns that into a supervised fleet:
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agente/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agent/main/install.sh | sudo bash
 prama-agent setup            # first steps: agent sign-in, zones (workspaces), permissions
 ```
 
@@ -258,7 +258,7 @@ includes an internal channel for that:
 prama-agent feedback "fleet model agy-backend-2 gemini-4-argon-medium: restarted with the old model"   # agent or you
 prama-agent feedback list                  # open reports (also in doctor, the menu and Telegram /reportes)
 prama-agent feedback show <id>             # report + context: version, agent, model, state, recent bus events
-prama-agent feedback export <id> | gh issue create -R JSNN15/prama-agente -t "…" -F -
+prama-agent feedback export <id> | gh issue create -R JSNN15/prama-agent -t "…" -F -
 prama-agent feedback close <id>
 ```
 
@@ -340,7 +340,7 @@ Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). Changes: [CHANGELOG.md](CHANGE
 
 ## Author
 
-Created and maintained by **Julian Neira Nova** (Hualpén, Chile) · [@JSNN15](https://github.com/JSNN15).
+Created and maintained by **Julian Neira Nova** (Santiago de Chile) · [@JSNN15](https://github.com/JSNN15).
 If you use prama-agent in your work, [CITATION.cff](CITATION.cff) has the citation.
 
 ## License

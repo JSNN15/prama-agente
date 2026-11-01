@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0
 #
 # One line (clones the repository, then installs):
-#   curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agente/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agent/main/install.sh | bash
 #   … | sudo bash                    system-wide: /opt/prama-agent, /usr/local/bin, /etc/prama-agent
 #   … | PRAMA_REF=v6.1.0 bash        a specific release
 # From a clone:
@@ -12,7 +12,7 @@
 #   make install                     current user: ~/.local/bin, ~/.config/prama-agent
 set -euo pipefail
 
-REPO_URL="${PRAMA_REPO_URL:-https://github.com/JSNN15/prama-agente.git}"
+REPO_URL="${PRAMA_REPO_URL:-https://github.com/JSNN15/prama-agent.git}"
 if [ "$(id -u)" = 0 ]; then
   PREFIX="${PREFIX:-/usr/local}" CONF_DIR="${CONF_DIR:-/etc/prama-agent}" DEST="${PRAMA_HOME:-/opt/prama-agent}"
 else

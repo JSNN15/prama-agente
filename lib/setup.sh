@@ -204,7 +204,7 @@ subcmd_login() {
 # _config_set KEY VALUE — replaces or appends one assignment; only known keys and plain values.
 _config_set() {
   local key=$1 val=$2 f tmp
-  [[ "$key" =~ ^(PRAMA_SKIP_PERMISSIONS|PRAMA_DEFAULT_REMOTE|PRAMA_SWARM_WORKERS)$ ]] || die "Clave no admitida: $key"
+  [[ "$key" =~ ^(PRAMA_SKIP_PERMISSIONS|PRAMA_DEFAULT_REMOTE|PRAMA_SWARM_WORKERS|PRAMA_LANG|PRAMA_THEME|PRAMA_TUI_MOUSE)$ ]] || die "Clave no admitida: $key"
   [[ "$val" =~ ^[A-Za-z0-9:,._-]*$ ]] || die "Valor no admitido para $key: '$val'"
   f="$PRAMA_CONFIG_HOME/config.env"
   ensure_private_dir "$PRAMA_CONFIG_HOME"

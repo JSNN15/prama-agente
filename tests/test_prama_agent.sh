@@ -27,6 +27,8 @@ wait_for() { # wait_for <seconds> <condition>
 
 # ── Isolated environment ────────────────────────────────────────────────────
 TMP_ROOT=$(mktemp -d)
+# The assertions below check the Spanish interface; the English one has its own section.
+export PRAMA_LANG=es
 export PRAMA_TMUX_SOCKET="prama-test-$$"
 USER_SOCKET="user-test-$$"
 cleanup() {

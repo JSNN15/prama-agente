@@ -66,7 +66,7 @@ if [ "${1:-}" = "--internal-statusline" ]; then
   exit 0
 fi
 
-for _m in core ui agents roles bus swarm health fleet feedback setup telegram tui; do
+for _m in core ui agents roles bus swarm health fleet feedback setup prefs telegram tui; do
   # shellcheck source=/dev/null
   source "$LIB_DIR/$_m.sh"
 done
@@ -656,6 +656,8 @@ if [ $# -gt 0 ]; then
     zones)                 shift; subcmd_zones "$@"; exit $? ;;
     setup|init)            shift; subcmd_setup "$@"; exit $? ;;
     login|auth)            shift; subcmd_login "$@"; exit $? ;;
+    lang|language|idioma)  shift; subcmd_lang "$@"; exit $? ;;
+    theme|tema|color)      shift; subcmd_theme "$@"; exit $? ;;
     agents)                shift; subcmd_agents "$@"; exit 0 ;;
     cockpit|ui|team)       shift; subcmd_cockpit "$@"; exit $? ;;
     swarm|equipo)          shift; subcmd_swarm "$@"; exit $? ;;

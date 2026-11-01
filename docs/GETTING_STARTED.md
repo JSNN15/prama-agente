@@ -19,8 +19,8 @@ Recommended packages: `sudo apt install tmux git jq` (and `mosh` if you will con
 ## 2. Install prama-agent
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agente/main/install.sh | sudo bash   # system-wide
-curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agente/main/install.sh | bash        # just for you
+curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agent/main/install.sh | sudo bash   # system-wide
+curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agent/main/install.sh | bash        # just for you
 ```
 
 ## 3. Run the setup wizard
@@ -118,4 +118,4 @@ the README's "On your phone" section.
 - `prama-agent doctor` checks dependencies, agents, hooks and configuration.
 - `prama-agent fleet status` shows why an agent is blocked (`login`, `credit`, `limit`, `trust`, `model`).
 - Agents report prama-agent bugs themselves (`prama-agent feedback list`); `feedback export <id>` gives
-  you an issue body for [GitHub](https://github.com/JSNN15/prama-agente/issues).
+  you an issue body for [GitHub](https://github.com/JSNN15/prama-agent/issues).
