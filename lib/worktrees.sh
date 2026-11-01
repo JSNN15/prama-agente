@@ -28,6 +28,15 @@ git_can_isolate() {
   git -C "$1" rev-parse --verify -q HEAD >/dev/null 2>&1 && git -C "$1" symbolic-ref -q HEAD >/dev/null 2>&1
 }
 
+# _wt_ident <dir> → WT_ID: git -c flags giving merge commits an author when the repository has
+# no identity configured (a fresh server or container); empty when it has one.
+_wt_ident() {
+  WT_ID=()
+  if [ -z "$(git -C "$1" config user.email 2>/dev/null)" ] && [ -z "${GIT_COMMITTER_EMAIL:-}" ]; then
+    WT_ID=(-c user.name=prama-agent -c user.email=prama-agent@localhost)
+  fi
+}
+
 # worker_branch <team> <session> [base-name] → prama/<team>/<short name>
 worker_branch() {
   local team=$1 s=$2 base=${3:-} short
@@ -165,7 +174,8 @@ wt_merge() {
   if [ -z "$(git -C "$dir" rev-list "$base..$WT_WB" 2>/dev/null)" ]; then
     info_msg "$(_t 'Nothing to merge: %s has no commits that %s lacks.' "$WT_WB" "$base")"; return 0
   fi
-  if out=$(git -C "$dir" merge --no-ff --no-edit -m "Merge $WT_WB (prama: $WT_W)" "$WT_WB" 2>&1); then
+  _wt_ident "$dir"
+  if out=$(git -C "$dir" "${WT_ID[@]}" merge --no-ff --no-edit -m "Merge $WT_WB (prama: $WT_W)" "$WT_WB" 2>&1); then
     # Tests between merges: a merge that breaks them is undone, so the base stays green.
     if [ -n "$test" ]; then
       info_msg "$(_t 'Running the tests: %s' "$test")"
@@ -221,7 +231,8 @@ wt_sync() {
   if (( ! self )) && [ -n "$(git -C "$WT_WD" status --porcelain --untracked-files=no)" ]; then
     die "$(_t '%s has uncommitted changes: ask it to commit and run prama-agent worktree sync itself.' "$WT_W")"
   fi
-  if out=$(git -C "$WT_WD" merge --no-edit "$base" 2>&1); then
+  _wt_ident "$WT_WD"
+  if out=$(git -C "$WT_WD" "${WT_ID[@]}" merge --no-edit "$base" 2>&1); then
     bus_event synced "${PRAMA_SESSION:-operator}" "$WT_W" "$base → $WT_WB"
     ok "$(_t '%s is up to date with %s.' "$WT_WB" "$base")"
     return 0
