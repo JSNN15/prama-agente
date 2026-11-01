@@ -39,8 +39,8 @@ _feedback_redact() {
 _feedback_valid_id() { [[ "$1" =~ ^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$ ]]; }
 
 _feedback_require() {
-  _feedback_valid_id "${1:-}" || die "Id de reporte inválido: '${1:-}' (prama-agent feedback list)"
-  [ -f "$(feedback_dir)/$1/meta" ] || die "No existe el reporte '$1'."
+  _feedback_valid_id "${1:-}" || die "$(_t "Invalid report id: '%s' (prama-agent feedback list)" "${1:-}")"
+  [ -f "$(feedback_dir)/$1/meta" ] || die "$(_t "Report '%s' does not exist." "$1")"
 }
 
 _feedback_get() { _kv_get "$(feedback_dir)/$1/meta" "$2" "${3:-}"; }
@@ -62,6 +62,23 @@ _feedback_ids() {
 feedback_open_count() { _feedback_ids open | grep -c . || true; }
 
 _feedback_usage() {
+  case $PRAMA_UI_LANG in es) _feedback_usage_es ;; *) _feedback_usage_en ;; esac
+}
+
+_feedback_usage_en() {
+  cat <<'EOF'
+Usage: prama-agent feedback "<what happened>" [--idea]   report a prama-agent bug (or an idea)
+       prama-agent feedback list [--all] [--json]       open reports (--all: closed ones too)
+       prama-agent feedback show <id>                   a report and its context
+       prama-agent feedback export <id>                 Markdown body for a GitHub issue
+       prama-agent feedback close <id>... | --all       mark as handled
+
+A good report says which command you ran, what you expected and what you got (with the exact error).
+It is for prama-agent bugs, not your task. It stays on this server; the operator reviews it.
+EOF
+}
+
+_feedback_usage_es() {
   cat <<'EOF'
 Uso: prama-agent feedback "<qué pasó>" [--idea]   reportar un fallo (o una idea) de prama-agent
      prama-agent feedback list [--all] [--json]   reportes abiertos (--all: también cerrados)
@@ -95,7 +112,7 @@ _feedback_add() {
     esac
   done
   text=${text//$'\r'/}
-  [ -n "${text//[[:space:]]/}" ] || die "Describe el problema: prama-agent feedback \"<qué pasó>\""
+  [ -n "${text//[[:space:]]/}" ] || die "$(_t 'Describe the problem: prama-agent feedback "<what happened>"')"
   (( ${#text} <= FEEDBACK_MAX_CHARS )) || text="${text:0:FEEDBACK_MAX_CHARS}…"
   text=$(_feedback_redact "$text")
 
@@ -107,16 +124,16 @@ _feedback_add() {
     if [ "$(cat "$d/$existing/body.md" 2>/dev/null)" = "$text" ]; then
       local n; n=$(_feedback_get "$existing" COUNT 1)
       _kv_merge "$d/$existing/meta" "$existing" "COUNT=$(( n + 1 ))" "LAST_AT=$(date -Iseconds)"
-      ok "Ya estaba reportado: $existing (repetido $(( n + 1 )) veces)."
+      ok "$(_t 'Already reported: %s (repeated %s times).' "$existing" "$(( n + 1 ))")"
       return 0
     fi
   done < <(_feedback_ids open)
   (( $(feedback_open_count) < FEEDBACK_MAX_OPEN )) \
-    || die "Hay $FEEDBACK_MAX_OPEN reportes abiertos; el operador debe revisarlos (prama-agent feedback list)."
+    || die "$(_t 'There are %s open reports; the operator must review them (prama-agent feedback list).' "$FEEDBACK_MAX_OPEN")"
 
   printf -v id '%(%Y%m%d-%H%M%S)T-%04x' -1 $(( RANDOM % 65536 ))
   f="$d/$id"
-  (umask 077 && mkdir -p "$f") || die "No se pudo crear $f"
+  (umask 077 && mkdir -p "$f") || die "$(_t 'Could not create %s' "$f")"
   local tv st reason model agent role zone=''
   tv=$(tmux -V 2>/dev/null); tv=${tv#tmux }
   if [ "$from" != operator ]; then
@@ -142,8 +159,8 @@ _feedback_add() {
   local first=${text%%$'\n'*}
   bus_event feedback "$from" operator "[$kind $id] ${first:0:200}"
   declare -F telegram_notify >/dev/null \
-    && telegram_notify "🐞 Reporte de prama-agent ($kind) de $from: ${first:0:300} — prama-agent feedback show $id" >/dev/null 2>&1
-  ok "Reporte $id registrado. El operador lo verá en 'prama-agent feedback list'."
+    && telegram_notify "$(_t '🐞 prama-agent report (%s) from %s: %s — prama-agent feedback show %s' "$kind" "$from" "${first:0:300}" "$id")" >/dev/null 2>&1
+  ok "$(_t "Report %s filed. The operator will see it in 'prama-agent feedback list'." "$id")"
 }
 
 _feedback_list() {
@@ -152,7 +169,7 @@ _feedback_list() {
     case "$a" in
       --all) which=all ;;
       --json) json=1 ;;
-      *) die "Opción desconocida: $a" ;;
+      *) die "$(_t 'Unknown option: %s' "$a")" ;;
     esac
   done
   if (( json )); then
@@ -177,8 +194,9 @@ _feedback_list() {
       "$( (( $(_feedback_get "$id" COUNT 1) > 1 )) && printf ' (×%s)' "$(_feedback_get "$id" COUNT)")"
     (( n++ ))
   done < <(_feedback_ids "$which")
-  (( n )) || info_msg "No hay reportes${which/open/ abiertos}."
-  (( n )) && info_msg "Detalle: prama-agent feedback show <id> · issue: prama-agent feedback export <id>"
+  if (( ! n )); then
+    if [ "$which" = open ]; then info_msg "$(_t 'No open reports.')"; else info_msg "$(_t 'No reports.')"; fi
+  else info_msg "$(_t 'Details: prama-agent feedback show <id> · issue: prama-agent feedback export <id>')"; fi
   return 0
 }
 
@@ -192,10 +210,10 @@ _feedback_show() {
   done < "$d/meta"
   printf '\n'
   sed 's/^/  │ /' "$d/body.md"
-  if [ -s "$d/events.jsonl" ]; then printf '\n  Últimos eventos del agente:\n'; sed 's/^/    /' "$d/events.jsonl"; fi
+  if [ -s "$d/events.jsonl" ]; then printf '\n  %s\n' "$(_t "Agent's latest events:")"; sed 's/^/    /' "$d/events.jsonl"; fi
   printf '\n'
-  info_msg "Publicar como issue: prama-agent feedback export $id | gh issue create -R ${PRAMA_ISSUES_REPO:-JSNN15/prama-agent} -t \"<título>\" -F -"
-  info_msg "Marcar como atendido: prama-agent feedback close $id"
+  info_msg "$(_t 'Post as an issue: prama-agent feedback export %s | gh issue create -R %s -t "<title>" -F -' "$id" "${PRAMA_ISSUES_REPO:-JSNN15/prama-agent}")"
+  info_msg "$(_t 'Mark as handled: prama-agent feedback close %s' "$id")"
 }
 
 # Markdown for the project's issue template: summary, report, environment, agent context.
@@ -232,8 +250,8 @@ EOF
 
 _feedback_close() {
   local id n=0
-  [ $# -gt 0 ] || die "Uso: prama-agent feedback close <id>... | --all"
-  [ -z "${PRAMA_SESSION:-}" ] || die "Solo el operador cierra reportes."
+  [ $# -gt 0 ] || die "$(_t 'Usage: prama-agent feedback close <id>... | --all')"
+  [ -z "${PRAMA_SESSION:-}" ] || die "$(_t 'Only the operator closes reports.')"
   local -a ids=("$@")
   [ "$1" = --all ] && mapfile -t ids < <(_feedback_ids open)
   for id in ${ids[@]+"${ids[@]}"}; do
@@ -241,5 +259,5 @@ _feedback_close() {
     _kv_merge "$(feedback_dir)/$id/meta" "$id" STATUS=closed "CLOSED_AT=$(date -Iseconds)"
     (( n++ ))
   done
-  ok "Reportes cerrados: $n"
+  ok "$(_t 'Reports closed: %s' "$n")"
 }
