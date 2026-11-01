@@ -309,7 +309,7 @@ _watch_alert() {
   while IFS= read -r c; do
     deliver_to_session "$c" "$text" || true
   done < <(_watch_coordinators "$s")
-  declare -F telegram_notify >/dev/null && telegram_notify "$text"
+  declare -F telegram_notify >/dev/null && telegram_notify "$text" alert "$s"
   return 0
 }
 

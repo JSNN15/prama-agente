@@ -125,19 +125,65 @@ except Exception:
 }
 
 # JSON body for sendMessage (no parse_mode → no markup errors possible).
+# tg_msg_json <chat> <text> [silent:0|1] [keyboard-json]
 tg_msg_json() {
-  printf '{"chat_id":"%s","text":"%s","disable_web_page_preview":true}' \
-    "$(json_escape "$1")" "$(json_escape "$2")"
+  local extra=''
+  [ "${3:-0}" = 1 ] && extra+=',"disable_notification":true'
+  [ -n "${4:-}" ] && extra+=',"reply_markup":{"inline_keyboard":'"$4"'}'
+  printf '{"chat_id":"%s","text":"%s","disable_web_page_preview":true%s}' \
+    "$(json_escape "$1")" "$(json_escape "$2")" "$extra"
+}
+
+# ── Notification level and mute (state files: the watchdog and the bot see changes at once) ──
+# Levels: all (everything, also bus traffic) · important (no bus traffic) · alerts (blocked,
+# stopped, quota) · off. Muted: messages still arrive, silently (no sound), until the given time.
+TG_NOTIFY_LEVELS=(all important alerts off)
+tg_notify_level() {
+  local l=''
+  [ -f "$PRAMA_STATE_HOME/telegram.notify" ] && IFS= read -r l < "$PRAMA_STATE_HOME/telegram.notify"
+  is_in "$l" "${TG_NOTIFY_LEVELS[@]}" || l=${PRAMA_TG_NOTIFY:-all}
+  is_in "$l" "${TG_NOTIFY_LEVELS[@]}" || l=all
+  printf '%s' "$l"
+}
+tg_mute_until() {
+  local u=0
+  [ -f "$PRAMA_STATE_HOME/telegram.mute" ] && IFS= read -r u < "$PRAMA_STATE_HOME/telegram.mute"
+  [[ $u =~ ^[0-9]+$ ]] || u=0
+  printf '%s' "$u"
+}
+
+# _tg_alert_buttons <kind> <session> → inline keyboard JSON (bot callbacks: p view, t talk,
+# r restart (asks first), T team). Empty when the session name cannot be a callback.
+_tg_alert_buttons() {
+  local kind=$1 s=$2 v t r tm
+  valid_session_name "$s" && (( ${#s} <= 60 )) || return 0
+  _tv v '👁 Screen'; _tv t '💬 Talk'; _tv r '🔄 Restart'; _tv tm '👥 Team'
+  case $kind in
+    alert) printf '[[{"text":"%s","callback_data":"p:%s"},{"text":"%s","callback_data":"t:%s"}],[{"text":"%s","callback_data":"r:%s"}]]' \
+             "$v" "$s" "$t" "$s" "$r" "$s" ;;
+    team)  printf '[[{"text":"%s","callback_data":"T:%s"},{"text":"%s","callback_data":"t:%s"}]]' "$tm" "$s" "$t" "$s" ;;
+    *)     printf '[[{"text":"%s","callback_data":"p:%s"},{"text":"%s","callback_data":"t:%s"}]]' "$v" "$s" "$t" "$s" ;;
+  esac
 }
 
 # Sends a push notification to the paired chat. Non-blocking; silent no-op if not configured.
+# telegram_notify <text> [kind] [session] — kind: info (bus traffic) | report | team | alert.
+# With a session, the message carries buttons to act on it from the phone.
 telegram_notify() {
-  local text=${1:-}
+  local text=${1:-} kind=${2:-info} s=${3:-} level silent=0 kb=''
   [ -n "$text" ] || return 0
   command -v curl >/dev/null 2>&1 || return 0
   tg_configured || return 0
+  level=$(tg_notify_level)
+  case $level in
+    off)       return 0 ;;
+    alerts)    [ "$kind" = alert ] || return 0 ;;
+    important) [ "$kind" = info ] && return 0 ;;
+  esac
+  (( $(tg_mute_until) > ${EPOCHSECONDS:-$(date +%s)} )) && silent=1
+  [ -n "$s" ] && kb=$(_tg_alert_buttons "$kind" "$s")
   local body
-  body=$(tg_msg_json "$TG_CHAT_ID" "${text:0:4000}")
+  body=$(tg_msg_json "$TG_CHAT_ID" "${text:0:4000}" "$silent" "$kb")
   ( tg_api "$TG_TOKEN" sendMessage "$body" 10 >/dev/null 2>&1 & ) 2>/dev/null
   return 0
 }
@@ -503,6 +549,8 @@ Uso: prama-agent telegram <acción>
   logs [-f] [N]           Ver el log del bot
   test                    Enviar un mensaje de prueba (síncrono)
   notify <texto>          Enviar una notificación
+  alerts [nivel]          Qué avisa el bot: all | important (sin tráfico del bus) | alerts | off
+  mute [30m|1h|8h|off]    Avisos sin sonido por un tiempo (también /silencio en el bot)
   menu                    Menú interactivo
 Requiere curl; el bot interactivo requiere además python3.
 EOF
@@ -515,6 +563,8 @@ Usage: prama-agent telegram <action>
   logs [-f] [N]           Show the bot log
   test                    Send a test message (synchronous)
   notify <text>           Send a notification
+  alerts [level]          What the bot sends: all | important (no bus traffic) | alerts | off
+  mute [30m|1h|8h|off]    Notifications without sound for a while (also /mute in the bot)
   menu                    Interactive menu
 Needs curl; the interactive bot also needs python3.
 EOF
@@ -588,6 +638,32 @@ subcmd_telegram() {
       [ -f "$logf" ] || { info_msg "$(_t 'No log yet (%s).' "$logf")"; return 0; }
       if (( follow )); then tail -n "$n" -f "$logf"; else tail -n "$n" "$logf"; fi
       ;;
+    alerts|level)
+      # telegram alerts [all|important|alerts|off] [--porcelain → "level|mute_until"]
+      local l=${1:-}
+      if [ "$l" = --porcelain ]; then printf '%s|%s\n' "$(tg_notify_level)" "$(tg_mute_until)"; return 0; fi
+      if [ -n "$l" ]; then
+        is_in "$l" "${TG_NOTIFY_LEVELS[@]}" || die "$(_t 'Unknown level: %s (use: %s)' "$l" "${TG_NOTIFY_LEVELS[*]}")"
+        ensure_private_dir "$PRAMA_STATE_HOME"
+        printf '%s\n' "$l" > "$PRAMA_STATE_HOME/telegram.notify"
+      fi
+      _tg_level_desc "$(tg_notify_level)"
+      ;;
+    mute|silence)
+      # telegram mute [30m|1h|8h|24h|off]: notifications arrive without sound until then
+      local d=${1:-1h} secs u
+      case $d in
+        off|0|no) secs=0 ;;
+        *[0-9]m)  secs=$(( ${d%m} * 60 )) ;;
+        *[0-9]h)  secs=$(( ${d%h} * 3600 )) ;;
+        *)        die "$(_t 'Invalid duration: %s (e.g. 30m, 1h, 8h, off)' "$d")" ;;
+      esac
+      ensure_private_dir "$PRAMA_STATE_HOME"
+      u=0; (( secs > 0 )) && u=$(( ${EPOCHSECONDS:-$(date +%s)} + secs ))
+      printf '%s\n' "$u" > "$PRAMA_STATE_HOME/telegram.mute"
+      if (( u )); then ok "$(_t 'Muted until %s (messages arrive without sound).' "$(date -d "@$u" '+%H:%M' 2>/dev/null || printf '%s' "$d")")"
+      else ok "$(_t 'Sound back on.')"; fi
+      ;;
     notify)
       tg_configured || { warn "$(_t 'Telegram is not configured.')"; return 1; }
       [ -n "${*:-}" ] || { warn "$(_t 'Usage: prama-agent telegram notify <text>')"; return 1; }
@@ -601,5 +677,14 @@ subcmd_telegram() {
       ;;
     -h|--help|help) tg_usage ;;
     *) warn "$(_t 'Unknown action: %s' "$action")"; tg_usage; return 1 ;;
+  esac
+}
+
+_tg_level_desc() {
+  case $1 in
+    all)       ok "$(_t 'Notifications: all (alerts, reports, teams and bus traffic)')" ;;
+    important) ok "$(_t 'Notifications: important (alerts, reports and teams; no bus traffic)')" ;;
+    alerts)    ok "$(_t 'Notifications: alerts only (blocked or stopped agents, quota)')" ;;
+    off)       ok "$(_t 'Notifications: off')" ;;
   esac
 }

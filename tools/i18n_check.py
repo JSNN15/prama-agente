@@ -41,7 +41,9 @@ def placeholders(s):
 def sh_ids():
     ids, dyn = {}, []
     for f in SH_FILES:
-        for n, line in enumerate(open(os.path.join(ROOT, f), encoding="utf-8"), 1):
+        with open(os.path.join(ROOT, f), encoding="utf-8") as fh:
+            lines = fh.readlines()
+        for n, line in enumerate(lines, 1):
             if line.lstrip().startswith("#"):
                 continue
             for m in SH_RE.finditer(line):
@@ -55,7 +57,8 @@ def sh_ids():
 def py_ids():
     ids = {}
     for f in PY_FILES:
-        src = open(os.path.join(ROOT, f), encoding="utf-8").read()
+        with open(os.path.join(ROOT, f), encoding="utf-8") as fh:
+            src = fh.read()
         for m in PY_RE.finditer(src):
             raw = m.group(1) if m.group(1) is not None else m.group(2)
             mid = bytes(raw, "utf-8").decode("unicode_escape").encode("latin-1").decode("utf-8")
@@ -89,7 +92,10 @@ def sh_conflicts(lang):
 
 def py_catalog(lang):
     path = os.path.join(ROOT, "lib", "lang", lang, "telegram_bot.json")
-    return json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
 
 
 def check(kind, ids, cat, lang, show_unused):

@@ -76,7 +76,8 @@ _bus_pause() {
   printf '\n'
 }
 
-_bus_notify() { type telegram_notify >/dev/null 2>&1 && telegram_notify "$1" >/dev/null 2>&1; return 0; }
+# _bus_notify <text> [kind] [session] — see telegram_notify (bus traffic is "info")
+_bus_notify() { type telegram_notify >/dev/null 2>&1 && telegram_notify "$1" "${2:-info}" "${3:-}" >/dev/null 2>&1; return 0; }
 
 # ── Session inspection ──────────────────────────────────────────────────────
 bus_session_state() {
@@ -413,7 +414,7 @@ _bus_report() {
   else
     ok "$(_t 'Report logged on the bus.')"
   fi
-  _bus_notify "✅ $(_t '[REPORT FROM %s]: %s' "$sender" "$msg")"
+  _bus_notify "✅ $(_t '[REPORT FROM %s]: %s' "$sender" "$msg")" report "$sender"
 }
 
 _bus_broadcast() {

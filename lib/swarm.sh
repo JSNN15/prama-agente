@@ -214,7 +214,7 @@ _swarm_start() {
   [ -n "$task" ] && evtext+=$(_t ' · objective: %s' "$task")
   bus_event queued "${PRAMA_SESSION:-operator}" "$cs" "$evtext"
   watchdog_ensure || true
-  declare -F telegram_notify >/dev/null && telegram_notify "$(_t "🤝 Team \"%s\" in '%s': %s + %d executor(s)" "$team" "$zone" "$cs" "${#members[@]}")" >/dev/null 2>&1
+  declare -F telegram_notify >/dev/null && telegram_notify "$(_t "🤝 Team \"%s\" in '%s': %s + %d executor(s)" "$team" "$zone" "$cs" "${#members[@]}")" team "$cs" >/dev/null 2>&1
 
   if (( open )) && [ -t 0 ] && [ -t 1 ]; then
     subcmd_cockpit "$cs"
