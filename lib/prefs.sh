@@ -13,6 +13,7 @@ prefs_set_theme() {
   valid_theme "$th" || return 1
   (( save )) && _config_set PRAMA_THEME "$th"
   PRAMA_THEME=$th
+  (( save )) && PRAMA_THEME_ENV=''
   ui_init_theme
   if declare -F tui_styles >/dev/null; then tui_styles; fi
   (( save )) && _prefs_reload_tmux
@@ -24,7 +25,7 @@ prefs_set_lang() {
   local l=$1
   is_in "$l" "${PRAMA_LANGS[@]}" auto || return 1
   _config_set PRAMA_LANG "$l"
-  PRAMA_LANG=$l
+  PRAMA_LANG=$l PRAMA_LANG_ENV=''
   i18n_init
   _prefs_reload_tmux
   return 0
@@ -59,6 +60,7 @@ subcmd_theme() {
       done
       printf '\n %s\n' "$(_t 'Change it with: prama-agent theme <name>  (also in the menu: ⚙ Preferences)')"
       return 0 ;;
+    --names) printf '%s\n' "${PRAMA_THEMES[@]}"; return 0 ;;
     -h|--help|help)
       printf '%s\n' "$(_t 'Usage: prama-agent theme [list | <name>]')"; return 0 ;;
   esac

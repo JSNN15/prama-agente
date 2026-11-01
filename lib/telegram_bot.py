@@ -60,8 +60,17 @@ COMMAND_ALIASES = {
     "teams": ("team", "equipos", "equipo"),
     "quota": ("cuota",),
     "reports": ("reportes", "bugs"),
+    "alerts": ("alertas", "alarms"),
+    "daemons": ("daemon",),
+    "notify": ("avisos", "notifications"),
+    "mute": ("silencio", "silenciar"),
 }
-LOCAL_COMMANDS = {"es": {"teams": "equipos", "quota": "cuota", "reports": "reportes"}}
+LOCAL_COMMANDS = {"es": {"teams": "equipos", "quota": "cuota", "reports": "reportes",
+                         "alerts": "alertas", "notify": "avisos", "mute": "silencio"}}
+NOTIFY_LEVELS = ("all", "important", "alerts", "off")
+MUTE_CHOICES = ("30m", "1h", "8h", "24h")
+QUOTA_ALERT = 90            # % of a quota window that counts as an alert
+MEMORY_SHOWN = 15           # newest memory notes shown in a team's memory view
 HOST = socket.gethostname().split(".")[0]
 
 TOKEN = ""
@@ -283,6 +292,17 @@ class Prama:
         return [d for d in self.json(["feedback", "list", "--json"])
                 if isinstance(d, dict) and isinstance(d.get("id"), str)]
 
+    def memory(self, target):
+        """Notes of a team's memory and its zone's (prama-agent memory show <session> --json)."""
+        return [d for d in self.json(["memory", "show", target, "--json"])
+                if isinstance(d, dict) and isinstance(d.get("text"), str)]
+
+    def notify_state(self):
+        """(level, mute_until) of the Telegram notifications."""
+        out = self.ok(["telegram", "alerts", "--porcelain"]).strip()
+        level, _sep, until = out.partition("|")
+        return (level if level in NOTIFY_LEVELS else "all"), (int(until) if until.isdigit() else 0)
+
     def capture(self, name, lines=SNAP_LINES):
         return self.ok(["capture", name, str(lines)], timeout=15)
 
@@ -358,6 +378,18 @@ def quota_peak(q):
     return max([v for v in vals if isinstance(v, (int, float))] or [0])
 
 
+def needs_attention(d):
+    """Why an agent of `fleet status --json` needs the operator, or ''."""
+    st = str(d.get("state", "")).upper()
+    if st == "BLOCKED":
+        return _("blocked") + (" (%s)" % d["blocked_reason"] if d.get("blocked_reason") else "")
+    if st == "DEAD":
+        return _("stopped")
+    if quota_peak(d.get("quota")) >= QUOTA_ALERT:
+        return _("quota at %d%%") % quota_peak(d.get("quota"))
+    return ""
+
+
 def teams_of(fleet):
     """{coordinator_session: (coordinator_row, [member_rows])}. A zone can hold several teams."""
     teams = {}
@@ -399,6 +431,8 @@ class Bot:
         self.lock = threading.Lock()
         self.unauth_seen = {}
         self.pending_team = ""     # zone waiting for a typed team name ("✍️ Other name")
+        self.pending_queue = ""    # daemon waiting for a typed task ("➕ Queue a task")
+        self.pending_note = ""     # coordinator whose team memory gets the next text
 
     # ── helpers ──
     def cb(self, data):
@@ -502,9 +536,17 @@ class Bot:
         for s in controllable[:MAX_LISTED]:
             kb.append([self.b("%s %s · %s" % (dot(s), s["name"], s.get("role", "?")),
                               "s:" + s["name"])])
+        try:
+            hot = [d for d in self.prama.fleet() if needs_attention(d)]
+        except CliError:
+            hot = []
+        if hot:
+            lines.insert(3, _("🚨 <b>%d agent(s) need attention</b> → /%s") % (len(hot), command_name("alerts")))
+            lines.insert(4, "")
         kb.append([self.b(_("➕ New agent"), "n"), self.b(_("🤝 New team"), "w")])
-        kb.append([self.b(_("👥 Teams"), "T"), self.b(_("◔ Quota"), "q")])
-        kb.append([self.b(_("🔄 Refresh"), "m"), self.b(_("❓ Help"), "h")])
+        kb.append([self.b(_("👥 Teams"), "T"), self.b(_("🚨 Alerts") + (" (%d)" % len(hot) if hot else ""), "A")])
+        kb.append([self.b(_("⚙️ Daemons"), "d"), self.b(_("◔ Quota"), "q")])
+        kb.append([self.b(_("🔔 Notifications"), "N"), self.b(_("🔄 Refresh"), "m"), self.b(_("❓ Help"), "h")])
         return "\n".join(lines), kb
 
     def view_session(self, s, note=""):
@@ -548,6 +590,10 @@ class Bot:
             _("/%s — teams: status, talk to the coordinator, add or close") % command_name("teams"),
             _("/%s — 5h / 7d quota usage per agent") % command_name("quota"),
             _("/%s — prama-agent bugs reported by the agents") % command_name("reports"),
+            _("/%s — agents that need you: blocked, stopped, quota") % command_name("alerts"),
+            _("/daemons — daemon agents and their queues; queue a task"),
+            _("/%s — what the bot notifies you about") % command_name("notify"),
+            _("/%s [30m|1h|8h|off] — notifications without sound") % command_name("mute"),
             _("/help — this help"), "",
             _("Plain text → goes to the selected session (✍️)."),
             _("Roles: %s") % ", ".join(ROLES),
@@ -593,7 +639,7 @@ class Bot:
         add = [self.b("➕ 1 %s" % a, "ta:%s:%s" % (cs, a)) for a in self.prama.agents()[:3]]
         if add:
             kb.append(add)
-        kb.append([self.b(_("🛑 Close team"), "tx:" + cs), self.b("🔄", "T:" + cs)])
+        kb.append([self.b(_("🧠 Memory"), "M:" + cs), self.b(_("🛑 Close team"), "tx:" + cs), self.b("🔄", "T:" + cs)])
         kb.append([self.b(_("⬅ Teams"), "T"), self.b(_("☰ Menu"), "m")])
         return "\n".join(lines), kb
 
@@ -683,6 +729,78 @@ class Bot:
         if not cs:
             return self.send(*self.view_teams(note), edit_id=mid)
         return self.send(*self.view_team(cs, note), edit_id=mid)
+
+    def view_alerts(self, note=""):
+        """Agents that need the operator, each with the buttons to act on it."""
+        lines = ([note, ""] if note else []) + [_("<b>🚨 Alerts</b>"), ""]
+        kb = []
+        hot = [(d, needs_attention(d)) for d in self.prama.fleet()]
+        hot = [(d, why) for d, why in hot if why]
+        for d, why in hot[:MAX_LISTED]:
+            s = d["session"]
+            lines.append("%s <code>%s</code> · <b>%s</b>" % (dot(d), e(s), e(why)))
+            if d.get("blocked_detail"):
+                lines.append("    <i>%s</i>" % e(str(d["blocked_detail"])[:160]))
+            if d.get("queue"):
+                lines.append("    " + _("<i>%s task(s) waiting in its queue</i>") % e(d["queue"]))
+            kb.append([self.b("👁 " + s[-22:], "p:" + s), self.b(_("🔄 Restart"), "r:" + s),
+                       self.b(_("🛑 Close"), "x:" + s)])
+        if not hot:
+            lines.append(_("✅ All agents are fine."))
+        lines += ["", _("Alerts also reach you as messages, with these buttons. /%s chooses which ones.")
+                  % command_name("notify")]
+        kb.append([self.b(_("🔄 Update"), "A"), self.b(_("⬅ Back"), "m")])
+        return "\n".join(lines), kb
+
+    def view_daemons(self, note=""):
+        """Daemon agents: state and queue; queue a task, watch, close."""
+        lines = ([note, ""] if note else []) + [_("<b>⚙️ Daemons</b>"), ""]
+        kb = []
+        ds = [d for d in self.prama.fleet() if d.get("role") == "daemon"]
+        for d in ds[:MAX_LISTED]:
+            s = d["session"]
+            meta = " · ".join(x for x in (d.get("agent", "?"), str(d.get("state", "?")).lower(),
+                                          _("%s queued") % d.get("queue", 0), quota_text(d.get("quota"))) if x)
+            lines += ["%s <code>%s</code>" % (dot(d), e(s)), "    <i>%s</i>" % e(meta)]
+            kb.append([self.b(_("➕ Queue a task"), "dq:" + s), self.b(_("👁 Screen"), "p:" + s),
+                       self.b("🛑", "x:" + s)])
+        if not ds:
+            lines.append(_("<i>No daemons. A daemon works through its queue in a loop, unattended.</i>"))
+        lines += ["", _("Launch one: ➕ New agent → role <b>daemon</b>.")]
+        kb.append([self.b(_("➕ New agent"), "n"), self.b(_("🔄 Update"), "d"), self.b(_("⬅ Back"), "m")])
+        return "\n".join(lines), kb
+
+    def view_memory(self, cs, note=""):
+        """A team's shared memory (and its zone's): the newest notes."""
+        team = teams_of(self.prama.fleet()).get(cs)
+        if not team:
+            return self.view_teams(_("⚠️ That team no longer exists."))
+        label = team_label(team[0])
+        notes = self.prama.memory(cs)
+        lines = ([note, ""] if note else []) + [_("<b>🧠 Memory · %s</b>") % e(label), ""]
+        for d in notes[-MEMORY_SHOWN:]:
+            scope = "🌐" if d.get("scope") == "zone" else "•"
+            lines.append("%s <i>%s · %s</i>\n   %s" % (scope, e(d.get("ts", "")), e(d.get("by", "")), e(d["text"])))
+        if not notes:
+            lines.append(_("<i>Empty. The agents add decisions and findings here; so can you.</i>"))
+        elif len(notes) > MEMORY_SHOWN:
+            lines.append(_("<i>… %d older note(s) on the server: prama-agent memory show</i>") % (len(notes) - MEMORY_SHOWN))
+        kb = [[self.b(_("✍️ Add a note"), "Mn:" + cs), self.b(_("🔄 Update"), "M:" + cs)],
+              [self.b(_("⬅ Team"), "T:" + cs), self.b(_("☰ Menu"), "m")]]
+        return "\n".join(lines), kb
+
+    def view_notify(self, note=""):
+        level, until = self.prama.notify_state()
+        names = {"all": _("everything (also bus traffic)"), "important": _("important (alerts, reports, teams)"),
+                 "alerts": _("alerts only"), "off": _("nothing")}
+        lines = ([note, ""] if note else []) + [_("<b>🔔 Notifications</b>"), "",
+                                               _("Sending: <b>%s</b>") % e(names.get(level, level))]
+        if until > time.time():
+            lines.append(_("🔕 Without sound until %s") % time.strftime("%H:%M", time.localtime(until)))
+        kb = [[self.b(("● " if lv == level else "") + names[lv], "Nl:" + lv)] for lv in NOTIFY_LEVELS]
+        kb.append([self.b("🔕 " + m, "Nm:" + m) for m in MUTE_CHOICES])
+        kb.append([self.b(_("🔔 Sound on"), "Nm:off"), self.b(_("⬅ Back"), "m")])
+        return "\n".join(lines), kb
 
     def view_error(self, msg, back="m"):
         return "⚠️ %s" % e(msg), [[self.b(_("⬅ Back"), back)]]
@@ -873,6 +991,29 @@ class Bot:
             return self.send(*self.view_teams(), edit_id=mid)
         if act == "q":
             return self.send(*self.view_quota(), edit_id=mid)
+        if act == "A":
+            return self.send(*self.view_alerts(), edit_id=mid)
+        if act == "d":
+            return self.send(*self.view_daemons(), edit_id=mid)
+        if act == "dq":                     # queue a task for a daemon: the next text
+            if not self.find_session(arg):
+                return self.send(*self.view_daemons(_("⚠️ That daemon no longer exists.")), edit_id=mid)
+            self.pending_queue, self.pending_note = arg, ""
+            return self.send(_("✍️ Type the task for <b>%s</b>; it joins its queue.") % e(arg),
+                             [[self.b(_("✖ Cancel"), "d")]], edit_id=mid)
+        if act == "M":
+            return self.send(*self.view_memory(arg), edit_id=mid)
+        if act == "Mn":                     # a note for a team's memory: the next text
+            self.pending_note, self.pending_queue = arg, ""
+            return self.send(_("✍️ Type the note for the team memory (a decision, a convention, a finding)."),
+                             [[self.b(_("✖ Cancel"), "M:" + arg)]], edit_id=mid)
+        if act == "N":
+            return self.send(*self.view_notify(), edit_id=mid)
+        if act in ("Nl", "Nm"):
+            if (act == "Nl" and arg not in NOTIFY_LEVELS) or (act == "Nm" and arg not in MUTE_CHOICES + ("off",)):
+                return self.send(*self.view_notify(), edit_id=mid)
+            self.prama.ok(["telegram", "alerts" if act == "Nl" else "mute", arg])
+            return self.send(*self.view_notify(_("✅ Saved.")), edit_id=mid)
         if act == "f":
             return self.send(*self.view_reports(), edit_id=mid)
         if act in ("tx", "TX"):             # close a whole team (with confirmation)
@@ -927,6 +1068,18 @@ class Bot:
                 return self.send(*self.view_quota())
             if cmd == "reports":
                 return self.send(*self.view_reports())
+            if cmd == "alerts":
+                return self.send(*self.view_alerts())
+            if cmd == "daemons":
+                return self.send(*self.view_daemons())
+            if cmd == "notify":
+                return self.send(*self.view_notify())
+            if cmd == "mute":
+                arg = (rest.split() or ["1h"])[0].lower()
+                if arg not in MUTE_CHOICES + ("off",):
+                    return self.send(*self.view_error(_("Usage: /mute [30m|1h|8h|24h|off]")))
+                self.prama.ok(["telegram", "mute", arg])
+                return self.send(*self.view_notify(_("✅ Saved.")))
             if cmd == "launch":
                 args = rest.split()
                 if len(args) not in (2, 3):
@@ -934,6 +1087,14 @@ class Bot:
                 role = args[2] if len(args) == 3 else "executor"
                 return self.do_launch(args[0], args[1], role)
             return self.send(*self.view_error(_("Unknown command: /%s — use /help") % cmd))
+        if self.pending_queue:
+            target, self.pending_queue = self.pending_queue, ""
+            self.prama.ok(["bus", "assign", target, text], timeout=30)
+            return self.send(*self.view_daemons(_("✅ Queued for <b>%s</b>.") % e(target)))
+        if self.pending_note:
+            cs, self.pending_note = self.pending_note, ""
+            self.prama.ok(["memory", "add", cs, text], timeout=30)
+            return self.send(*self.view_memory(cs, _("✅ Note saved.")))
         if self.pending_team:
             zone, self.pending_team = self.pending_team, ""
             name = text.strip().lower().replace(" ", "-")
@@ -1000,6 +1161,10 @@ class Bot:
             (command_name("teams"), _("Teams: status, talk, add, close")),
             (command_name("quota"), _("5h / 7d quota per agent")),
             (command_name("reports"), _("prama bugs reported by agents")),
+            (command_name("alerts"), _("Agents that need you")),
+            ("daemons", _("Daemons and their queues")),
+            (command_name("notify"), _("What the bot notifies")),
+            (command_name("mute"), _("Mute: /mute 1h · off")),
             ("help", _("Help")),
         )]
 

@@ -24,6 +24,8 @@ PRAMA_MENU_KEY="${PRAMA_MENU_KEY:-M-m}"                 # key that detaches back
 PRAMA_NAV_KEY="${PRAMA_NAV_KEY:-M-a}"                   # agent picker popup
 PRAMA_COCKPIT_KEY="${PRAMA_COCKPIT_KEY:-M-c}"           # team cockpit ⇄ agent
 PRAMA_COMPACT_COLS="${PRAMA_COMPACT_COLS:-100}"         # narrower clients (phones) get the compact layout
+# Language and theme from the environment win over config.env (PRAMA_LANG=en prama-agent help).
+PRAMA_LANG_ENV=${PRAMA_LANG:-} PRAMA_THEME_ENV=${PRAMA_THEME:-}
 PRAMA_LANG="${PRAMA_LANG:-auto}"                        # interface language: en | es | auto (from the locale)
 PRAMA_THEME="${PRAMA_THEME:-midnight}"                  # color theme (prama-agent theme lists them)
 PRAMA_HOOKS="${PRAMA_HOOKS:-1}"                         # inject state hooks into claude sessions
@@ -97,6 +99,8 @@ prama_load_config() {
   PRAMA_BUS_DIR="${PRAMA_BUS_DIR:-$PRAMA_STATE_HOME/bus}"
   PRAMA_TMUX_CONF="${PRAMA_TMUX_CONF:-$PRAMA_STATE_HOME/tmux.conf}"
   # Language and theme may come from config.env: reload the catalog and the palette.
+  [ -n "$PRAMA_LANG_ENV" ] && PRAMA_LANG=$PRAMA_LANG_ENV
+  [ -n "$PRAMA_THEME_ENV" ] && PRAMA_THEME=$PRAMA_THEME_ENV
   i18n_init
   if declare -F ui_init_theme >/dev/null; then ui_init_theme; fi
   if declare -F tui_styles >/dev/null; then tui_styles; fi

@@ -159,7 +159,7 @@ _feedback_add() {
   local first=${text%%$'\n'*}
   bus_event feedback "$from" operator "[$kind $id] ${first:0:200}"
   declare -F telegram_notify >/dev/null \
-    && telegram_notify "$(_t '🐞 prama-agent report (%s) from %s: %s — prama-agent feedback show %s' "$kind" "$from" "${first:0:300}" "$id")" >/dev/null 2>&1
+    && telegram_notify "$(_t '🐞 prama-agent report (%s) from %s: %s — prama-agent feedback show %s' "$kind" "$from" "${first:0:300}" "$id")" report >/dev/null 2>&1
   ok "$(_t "Report %s filed. The operator will see it in 'prama-agent feedback list'." "$id")"
 }
 

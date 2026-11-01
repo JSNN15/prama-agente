@@ -94,4 +94,17 @@ I18N+=(
   ['Usage: prama-agent telegram notify <text>']='Uso: prama-agent telegram notify <texto>'
   ['Notification sent.']='Notificación enviada.'
   ['Unknown action: %s']='Acción desconocida: %s'
+  # Alert buttons, notification level and mute
+  ['👁 Screen']='👁 Pantalla'
+  ['💬 Talk']='💬 Hablar'
+  ['🔄 Restart']='🔄 Reiniciar'
+  ['👥 Team']='👥 Equipo'
+  ['Unknown level: %s (use: %s)']='Nivel desconocido: %s (usa: %s)'
+  ['Invalid duration: %s (e.g. 30m, 1h, 8h, off)']='Duración inválida: %s (p. ej. 30m, 1h, 8h, off)'
+  ['Muted until %s (messages arrive without sound).']='Silenciado hasta las %s (los avisos llegan sin sonido).'
+  ['Sound back on.']='Sonido reactivado.'
+  ['Notifications: all (alerts, reports, teams and bus traffic)']='Avisos: todos (alertas, reportes, equipos y tráfico del bus)'
+  ['Notifications: important (alerts, reports and teams; no bus traffic)']='Avisos: importantes (alertas, reportes y equipos; sin tráfico del bus)'
+  ['Notifications: alerts only (blocked or stopped agents, quota)']='Avisos: solo alertas (agentes bloqueados o detenidos, cuota)'
+  ['Notifications: off']='Avisos: desactivados'
 )

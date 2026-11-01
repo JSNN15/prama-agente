@@ -70,7 +70,7 @@ if [ "${1:-}" = "--internal-statusline" ]; then
   exit 0
 fi
 
-for _m in core ui agents roles bus swarm health fleet feedback setup prefs telegram tui; do
+for _m in core ui agents roles bus swarm health fleet feedback memory setup prefs telegram tui; do
   # shellcheck source=/dev/null
   source "$LIB_DIR/$_m.sh"
 done
@@ -160,11 +160,12 @@ ${C_BOLD}TEAMS${C_OFF}
   teams                  Active teams (several per zone: architecture, security, docs…)
   swarm stop <zone> [--team <name>|--all]      cockpit [zone|session] [--team <name>]
   bus status|assign|report|inbox|broadcast|watch|clear|help            Messages between agents
+  memory [show|add|clear] [<zone>|<session>] [--team T] [--zone-wide]   Team and zone memory (survives restarts)
   Inside tmux: $PRAMA_MENU_KEY menu · $PRAMA_NAV_KEY agent list · $PRAMA_COCKPIT_KEY cockpit ⇄ agent · Ctrl+b n/p next
 
 ${C_BOLD}SYSTEM${C_OFF}
   worktree list|create|remove|prune   profiles   mcp   agents [--json]
-  telegram setup|start|stop|restart|status|logs|test|notify   doctor [--restore-tmux-conf]
+  telegram setup|start|stop|restart|status|logs|test|notify|alerts|mute   doctor [--restore-tmux-conf]
   feedback "<bug>" | list | show <id> | export <id> | close <id>   prama bug reports (from agents)
   completion bash        Shell completion         info  Quick guide           update [version]  Update
 EOF
@@ -218,11 +219,12 @@ ${C_BOLD}EQUIPOS${C_OFF}
   teams                  Equipos activos (varios por zona: arquitectura, seguridad, docs…)
   swarm stop <zona> [--team <nombre>|--all]      cockpit [zona|sesión] [--team <nombre>]
   bus status|assign|report|inbox|broadcast|watch|clear|help            Mensajes entre agentes
+  memory [show|add|clear] [<zona>|<sesión>] [--team T] [--zone-wide]   Memoria del equipo y la zona (sobrevive reinicios)
   Dentro de tmux: $PRAMA_MENU_KEY menú · $PRAMA_NAV_KEY lista de agentes · $PRAMA_COCKPIT_KEY cockpit ⇄ agente · Ctrl+b n/p siguiente
 
 ${C_BOLD}SISTEMA${C_OFF}
   worktree list|create|remove|prune   profiles   mcp   agents [--json]
-  telegram setup|start|stop|restart|status|logs|test|notify   doctor [--restore-tmux-conf]
+  telegram setup|start|stop|restart|status|logs|test|notify|alerts|mute   doctor [--restore-tmux-conf]
   feedback "<fallo>" | list | show <id> | export <id> | close <id>   Reportes de fallos de prama (agentes)
   completion bash        Autocompletado           info  Guía rápida           update [versión]  Actualizar
 EOF
@@ -299,7 +301,9 @@ subcmd_status() {
     box_row "$C_BORDER_HI" "$(_t 'Launch one with %sprama-agent%s (interface) or %sprama-agent claude <zone>%s.' "$C_NEON" "$C_OFF" "$C_NEON" "$C_OFF")"
   else
     _tv h_s 'SESSION'; _tv h_r 'ROLE'; _tv h_st 'STATE'; _tv h_z 'ZONE / BRANCH'
-    box_row "$C_BORDER_HI" "$(printf '%s%-28s %-15s %-11s %-6s %-7s %s%s' "$C_MUTED" "$h_s" "$h_r" "$h_st" CPU RAM "$h_z" "$C_OFF")"
+    # Column widths in display columns (translations may carry accents).
+    ui_fit "$h_s" 28; h_s=$UI_S; ui_fit "$h_r" 15; h_r=$UI_S; ui_fit "$h_st" 11; h_st=$UI_S
+    box_row "$C_BORDER_HI" "$(printf '%s%s %s %s %-6s %-7s %s%s' "$C_MUTED" "$h_s" "$h_r" "$h_st" CPU RAM "$h_z" "$C_OFF")"
     box_sep "$C_BORDER_HI"
     local s ppid pcmd ppath dead _att a_pid cpu mem _et comm st branch
     while IFS='|' read -r s ppid pcmd ppath dead _att; do
@@ -670,7 +674,7 @@ subcmd_completion() {
 # prama-agent bash completion — add to ~/.bashrc:  eval "$(prama-agent completion bash)"
 _prama_agent() {
   local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]} first=${COMP_WORDS[1]:-}
-  local subs="status ls sessions attach logs capture send restart stop fleet swarm teams bus cockpit fzf worktree profiles mcp zones agents telegram feedback setup login lang theme doctor update completion info help"
+  local subs="status ls sessions attach logs capture send restart stop fleet swarm teams bus cockpit fzf worktree profiles mcp zones agents telegram feedback memory setup login lang theme doctor update completion info help"
   case "$prev" in
     --role|-O) COMPREPLY=($(compgen -W "executor coordinator reader daemon" -- "$cur")); return ;;
     --profile|-P) COMPREPLY=($(compgen -W "default openrouter deepseek glm local" -- "$cur")); return ;;
@@ -691,15 +695,16 @@ _prama_agent() {
       fi; return ;;
     swarm) COMPREPLY=($(compgen -W "list stop help --team --all --workers --coord --task --model --worker-model --no-open $(prama-agent zones 2>/dev/null | awk '{print $1}')" -- "$cur")); return ;;
     cockpit) COMPREPLY=($(compgen -W "$(prama-agent zones 2>/dev/null | awk '{print $1}') $(prama-agent sessions 2>/dev/null)" -- "$cur")); return ;;
-    telegram) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "setup start stop restart status logs test notify" -- "$cur")); return ;;
+    telegram) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "setup start stop restart status logs test notify alerts mute" -- "$cur")); return ;;
     worktree) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "list create remove prune" -- "$cur")); return ;;
     feedback|bug) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "list show export close help" -- "$cur")); return ;;
+    memory|memoria) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "list show add clear path help" -- "$cur")); return ;;
     zones) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "list add remove scan help" -- "$cur")); return ;;
     login) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "$(prama-agent agents 2>/dev/null | awk '{print $1}')" -- "$cur")); return ;;
     lang|language|idioma) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "en es auto" -- "$cur")); return ;;
     theme|tema|color)
-      # "prama-agent theme" lists the themes: the first lowercase word of each line is a name.
-      [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "$(prama-agent theme 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i ~ /^[a-z][a-z0-9_-]*$/) { print $i; break }}')" -- "$cur")); return ;;
+      # "prama-agent theme --names" prints the theme names, one per line.
+      [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "$(prama-agent theme --names 2>/dev/null)" -- "$cur")); return ;;
   esac
   if [ "$COMP_CWORD" -eq 1 ]; then
     COMPREPLY=($(compgen -W "$subs $(prama-agent agents 2>/dev/null | awk '{print $1}')" -- "$cur"))
@@ -748,6 +753,7 @@ if [ $# -gt 0 ]; then
     fleet)                 shift; subcmd_fleet "$@"; exit $? ;;
     telegram|tg|bot)       shift; subcmd_telegram "$@"; exit $? ;;
     feedback|bug)          shift; subcmd_feedback "$@"; exit $? ;;
+    memory|memoria|mem)    shift; subcmd_memory "$@"; exit $? ;;
     attach|a)              shift; subcmd_attach "${1:-}"; exit $? ;;
     stop|kill|k)           shift; subcmd_stop "$@"; exit $? ;;
     restart|r)             shift; subcmd_restart "${1:-}"; exit $? ;;

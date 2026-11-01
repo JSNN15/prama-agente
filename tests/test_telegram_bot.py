@@ -71,6 +71,11 @@ class FakePrama(tb.Prama):
                                    "agent": d["agent"], "zone": d["zone"]} for d in self.fleet_rows]), ""
         if args[:3] == ["feedback", "list", "--json"]:
             return 0, '[{"id":"20261031-120000-abcd","kind":"bug","from":"%s","count":3,"summary":"fleet <model> fails"}]' % COORD, ""
+        if args[:2] == ["memory", "show"]:
+            return 0, '[{"scope":"zone","ts":"2026-11-01 10:00","by":"operator","text":"API uses <FastAPI>"},' \
+                      '{"scope":"team","ts":"2026-11-01 11:00","by":"%s","text":"JWT rotates daily"}]' % SEC, ""
+        if args[:3] == ["telegram", "alerts", "--porcelain"]:
+            return 0, "important|0\n", ""
         if args[0] == "swarm" and args[1] == "stop":
             gone = {args[2]} | {d["session"] for d in self.fleet_rows if d.get("parent") == args[2]}
             self.fleet_rows = [d for d in self.fleet_rows if d["session"] not in gone]
@@ -232,6 +237,61 @@ class Security(unittest.TestCase):
         bot.on_text("/send ;rm hola")
         self.assertIn("⚠️", api.last_text())
         self.assertFalse([a for a in prama.ran if a[0] == "send"])
+
+
+class AlertsDaemonsMemory(unittest.TestCase):
+    def test_alerts_view_lists_blocked_and_quota_with_actions(self):
+        fleet = FLEET + [{"session": "prama-agy-landing", "agent": "agy", "zone": "landing", "role": "executor",
+                          "state": "BLOCKED", "blocked_reason": "login", "blocked_detail": "Sign in <again>",
+                          "parent": "operator", "queue": 3, "quota": None}]
+        bot, api, _ = make_bot(fleet)
+        bot.on_text("/alertas")
+        text = api.last_text()
+        self.assertIn("prama-agy-landing", text)
+        self.assertIn("bloqueado (login)", text)
+        self.assertIn("&lt;again&gt;", text)
+        self.assertIn("cuota al 93%", text)              # prama-agy-backend
+        self.assertNotIn(COORD + "</code>", text)
+        self.assertIn("r:prama-agy-landing", api.last_kb())
+
+    def test_menu_counts_agents_that_need_attention(self):
+        bot, api, _ = make_bot()
+        bot.on_text("/menu")
+        self.assertIn("1 agente(s) necesitan atención", api.last_text())
+        self.assertIn("A", api.last_kb())
+
+    def test_daemon_queue_takes_the_next_text(self):
+        fleet = FLEET + [{"session": "prama-daemon-agy-backend", "agent": "agy", "zone": "backend",
+                          "role": "daemon", "state": "DAEMON", "parent": "operator", "queue": 1, "quota": None}]
+        bot, api, prama = make_bot(fleet)
+        bot.on_text("/daemons")
+        self.assertIn("prama-daemon-agy-backend", api.last_text())
+        bot.on_callback("dq:prama-daemon-agy-backend", 7)
+        bot.on_text("revisar dependencias")
+        self.assertIn(["bus", "assign", "prama-daemon-agy-backend", "revisar dependencias"], prama.ran)
+        self.assertIn("En cola", api.last_text())
+
+    def test_team_memory_view_and_note(self):
+        bot, api, prama = make_bot()
+        bot.on_callback("T:" + SEC, 7)
+        self.assertIn("M:" + SEC, api.last_kb())
+        bot.on_callback("M:" + SEC, 7)
+        self.assertIn("JWT rotates daily", api.last_text())
+        self.assertIn("&lt;FastAPI&gt;", api.last_text())
+        bot.on_callback("Mn:" + SEC, 7)
+        bot.on_text("usar Argon2")
+        self.assertIn(["memory", "add", SEC, "usar Argon2"], prama.ran)
+
+    def test_notification_level_and_mute(self):
+        bot, api, prama = make_bot()
+        bot.on_text("/avisos")
+        self.assertIn("lo importante", api.last_text())
+        bot.on_callback("Nl:alerts", 7)
+        self.assertIn(["telegram", "alerts", "alerts"], prama.ran)
+        bot.on_text("/silencio 8h")
+        self.assertIn(["telegram", "mute", "8h"], prama.ran)
+        bot.on_callback("Nl:rm -rf", 7)
+        self.assertFalse([a for a in prama.ran if a[:2] == ["telegram", "alerts"] and a[2:] == ["rm -rf"]])
 
 
 class Language(unittest.TestCase):

@@ -554,6 +554,48 @@ out=$(MOCK_SLEEP=0 "$BIN" setup --check </dev/null 2>&1); rc=$?
 assert_true "setup --check runs without a terminal" "[ $rc -eq 0 ]"
 assert_contains "…and walks through agents, zones and permissions" "3 · Zonas" "$out"
 
+section "Languages, themes and team memory"
+out=$(PRAMA_LANG=en "$BIN" --help)
+assert_contains "English interface: usage" "FIRST STEPS" "$out"
+assert_not_contains "…without Spanish" "PRIMEROS" "$out"
+assert_contains "Spanish interface (PRAMA_LANG=es)" "PRIMEROS PASOS" "$("$BIN" --help)"
+out=$(PRAMA_LANG=en "$BIN" claude nowhere --dry-run 2>&1)
+assert_not_contains "English errors" "desconocida" "$out"
+out=$(bash -c 'source "'"$REPO_DIR"'/lib/core.sh"; source "'"$REPO_DIR"'/lib/roles.sh"; PRAMA_LANG=en; i18n_init; build_role_system_prompt coordinator s z')
+assert_contains "English role prompt keeps the machine marker" "[PRAMA-SWARM ROLE: COORDINATOR" "$out"
+assert_contains "…and teaches the team memory" "prama-agent memory add" "$out"
+assert_contains "Screen filter knows the English tags" "none" "$(bash -c 'source "'"$REPO_DIR"'/lib/core.sh"; screen_block_reason "$1" || echo none' _ $'> [PRAMA ALERT] quota exceeded, credit balance is too low\n⏺ ok')"
+LANGCFG="$TMP_ROOT/langcfg"; mkdir -p "$LANGCFG"
+out=$(XDG_CONFIG_HOME="$LANGCFG" PRAMA_LANG='' "$BIN" lang en 2>&1)
+assert_contains "lang en saves the language" 'PRAMA_LANG="en"' "$(cat "$LANGCFG/prama-agent/config.env")"
+assert_contains "…and it applies from config.env" "FIRST STEPS" "$(XDG_CONFIG_HOME="$LANGCFG" PRAMA_LANG='' "$BIN" --help)"
+assert_contains "…unless the environment says otherwise" "PRIMEROS PASOS" "$(XDG_CONFIG_HOME="$LANGCFG" PRAMA_LANG=es "$BIN" --help)"
+assert_eq "theme --names lists the themes" "7" "$("$BIN" theme --names | wc -l | tr -d ' ')"
+out=$(XDG_CONFIG_HOME="$LANGCFG" "$BIN" theme ocean 2>&1)
+assert_contains "theme <name> saves it" 'PRAMA_THEME="ocean"' "$(cat "$LANGCFG/prama-agent/config.env")"
+assert_contains "…and regenerates the tmux status bar" "theme=ocean" "$(cat "$HOME/.local/state/prama-agent/tmux.conf")"
+out=$("$BIN" theme 'x;y' 2>&1); rc=$?
+assert_true "Unknown themes are refused" "[ $rc -ne 0 ]"
+"$BIN" theme midnight >/dev/null 2>&1
+"$BIN" memory add alpha --team sec "Auth uses JWT (token=sk-ant-abcdefghijklmnopqrstuvwxyz0123)" >/dev/null
+"$BIN" memory add alpha --zone-wide "Python 3.12" >/dev/null
+out=$("$BIN" memory show alpha --team sec)
+assert_contains "memory: the team's notes" "Auth uses JWT" "$out"
+assert_contains "…after the zone's" "Python 3.12" "$out"
+assert_not_contains "…with secrets redacted" "sk-ant-" "$out"
+assert_true "memory show --json is valid JSON" "$BIN memory show alpha --team sec --json | jq -e 'length == 2' >/dev/null"
+out=$(PRAMA_SESSION=tp-claude-alpha "$BIN" memory clear alpha --zone-wide -y 2>&1); rc=$?
+assert_true "Agents cannot clear a memory" "[ $rc -ne 0 ]"
+"$BIN" memory clear alpha --team sec -y >/dev/null
+assert_not_contains "The operator can" "Auth uses JWT" "$("$BIN" memory show alpha --team sec)"
+"$BIN" telegram alerts important >/dev/null 2>&1
+assert_eq "Telegram notification level (state file)" "important|0" "$("$BIN" telegram alerts --porcelain)"
+"$BIN" telegram mute 1h >/dev/null 2>&1
+assert_true "telegram mute stores the end time" "[ \"\$($BIN telegram alerts --porcelain | cut -d'|' -f2)\" -gt \$(date +%s) ]"
+out=$("$BIN" telegram mute forever 2>&1); rc=$?
+assert_true "…and validates the duration" "[ $rc -ne 0 ]"
+"$BIN" telegram mute off >/dev/null 2>&1; "$BIN" telegram alerts all >/dev/null 2>&1
+
 section "Installer"
 out=$(BASH_COMPLETION_USER_DIR="$TMP_ROOT/comp" PREFIX="$TMP_ROOT/inst" CONF_DIR="$TMP_ROOT/inst/etc" bash "$REPO_DIR/install.sh" 2>&1); rc=$?
 assert_true "install.sh from a clone links the commands" "[ $rc -eq 0 ] && [ -x '$TMP_ROOT/inst/bin/prama-agent' ]"
