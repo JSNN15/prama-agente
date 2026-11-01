@@ -5,7 +5,7 @@
 
 set -u
 
-VERSION="6.3.0"
+VERSION="6.4.0"
 
 # Status line fast path: agy redraws it several times per second, so the last line is reused
 # for PRAMA_SL_MIN seconds with bash builtins only (no forks, before anything else runs).

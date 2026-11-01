@@ -61,7 +61,11 @@ spread across machines.
 ## Next
 
 - Credit and rate-limit telemetry for OpenRouter-backed agents (OpenRouter key endpoint).
-- English UI (the interface and role prompts are Spanish today); message catalogue for both languages.
+- More interface languages (Portuguese first): a new `lib/lang/<code>/` set of catalogs plus the
+  Telegram JSON; `tools/i18n_check.py` already handles several languages.
+- Swarm isolation: an optional git worktree per worker (`swarm --isolate`) with the coordinator merging
+  their branches, and a reviewer role in the default team.
+- A task board from the bus log (assigned · reported · stale) per team, in the menu and in Telegram.
 - `fleet status` history: per-agent cost and quota over time from the bus log.
 - Packaging: Homebrew tap and a `.deb`.
 - Feedback: `feedback export <id> --issue` to open the GitHub issue with `gh` after the operator
@@ -133,8 +137,12 @@ muestre un equipo repartido entre máquinas.
 ### Próximos pasos
 
 - Telemetría de crédito y límites para agentes sobre OpenRouter (endpoint de la clave de OpenRouter).
-- Interfaz en inglés (hoy la interfaz y los prompts de rol están en español); catálogo de mensajes en
-  ambos idiomas.
+- Más idiomas (primero portugués): un nuevo conjunto `lib/lang/<código>/` más el JSON de Telegram;
+  `tools/i18n_check.py` ya admite varios idiomas.
+- Aislamiento en los enjambres: un git worktree opcional por ejecutor (`swarm --isolate`) con el
+  coordinador integrando sus ramas, y un rol revisor en el equipo por defecto.
+- Un tablero de tareas desde el log del bus (asignada · reportada · estancada) por equipo, en el menú y en
+  Telegram.
 - Historial en `fleet status`: costo y cuota por agente a lo largo del tiempo, a partir del bus.
 - Empaquetado: tap de Homebrew y `.deb`.
 - Reportes: `feedback export <id> --issue` para abrir el issue en GitHub con `gh` tras la confirmación

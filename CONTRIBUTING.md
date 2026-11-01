@@ -38,7 +38,11 @@ make test-matrix   # the CI matrix in local containers (needs Docker): tmux 3.2a
 - Workflow actions are pinned by commit SHA (Dependabot updates them); keep it that way in new workflows.
 - Releases: bump `VERSION` in `bin/prama-agent`, add the `CHANGELOG.md` section, tag `vX.Y.Z`; the
   release workflow publishes the notes.
-- Keep comments in English; user-facing messages are Spanish today (see the roadmap for i18n).
+- Keep comments in English. User-facing text goes through `_t 'English text %s' "$arg"` (or `_tv var
+  …` on hot paths), with the Spanish translation in `lib/lang/es/<module>.sh` (Python: `_("…")` and
+  `lib/lang/es/telegram_bot.json`). The msgid is a one-line literal with printf placeholders; never
+  translate at source time, never translate JSON, events or other machine output. `make lint` runs
+  `tools/i18n_check.py`; `make i18n` also lists catalog entries nobody uses.
 - Document new behaviour in both `README.md` and `README.es.md`, and add an entry to `CHANGELOG.md`.
 
 ## License
@@ -57,3 +61,6 @@ verde en todas. Si encuentras un fallo usando prama con agentes, `prama-agent fe
 el cuerpo del issue listo para la plantilla. Lee los
 principios de diseño de arriba y las invariantes de seguridad en
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Documenta los cambios en `README.md` y `README.es.md`.
+Los textos para el usuario se escriben en inglés con `_t` / `_tv` y su traducción va en
+`lib/lang/es/<módulo>.sh` (Python: `_("…")` y `lib/lang/es/telegram_bot.json`); `make lint` revisa
+que no falte ninguna.

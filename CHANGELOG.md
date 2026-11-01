@@ -6,12 +6,50 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [6.4.0] - 2026-11-01
+
+### Added
+- **English and Spanish.** The whole tool speaks both: menu, CLI, help, doctor, setup, the agents' role
+  prompts and bus messages (agents report in your language) and the Telegram bot (commands in both:
+  `/teams` = `/equipos`, `/alerts` = `/alertas`…). It follows the locale (`es_*` → Spanish) or
+  `prama-agent lang en|es|auto` (`PRAMA_LANG`; the environment wins over config.env). The setup wizard
+  asks first. English is the source language; translations live in `lib/lang/es/` (one catalog per
+  module) and `tools/i18n_check.py` (part of `make lint`) fails on a missing translation, a placeholder
+  mismatch or two catalogs translating the same text differently.
+- **Color themes.** `prama-agent theme` lists seven (midnight, ocean, forest, ember, violet, light for
+  light terminals, mono for high contrast) with swatches; a theme paints the menu, the tmux status bar
+  and pane borders of every agent (regenerated and reloaded live) and the fzf inspector.
+- **⚙ Preferences** in the menu (`,`): language, theme (moving through the list previews it live; esc
+  restores) and mouse/touch, saved in config.env.
+- **Teams screen** (`m`, ☷ Teams): every team with its agents, how many are working and its objective;
+  per team: cockpit, message the coordinator, add agents, read or add to its memory, enter the
+  coordinator, close it. `+` on a coordinator adds agents to its team from anywhere in the menu.
+- **Shared team and zone memory**: `prama-agent memory show|add|clear|list` keeps short dated notes per
+  team and per zone (`--zone-wide`) on the server, redacted, capped at `PRAMA_MEMORY_MAX_LINES`. Role
+  prompts tell agents to read it at start and to record decisions; the coordinator's brief says how
+  many notes are waiting. Agents write to their own team and cannot clear a memory.
+- **Telegram alerts you can act on**: the watchdog's alerts (blocked, stopped, quota) arrive with
+  buttons (view screen, talk, restart); team and report notifications carry theirs. New views:
+  `/alerts` (agents that need you), `/daemons` (queues; queue a task), team memory (read, add a note),
+  `/notify` (all · important · alerts · off) and `/mute 30m|1h|8h|24h|off` (silent delivery); also
+  `prama-agent telegram alerts <level>` and `telegram mute <time>`.
+- Keyboard help (`?`) grouped by task, in two columns when there is room and scrollable on a phone;
+  the keybar shows the keys of what is selected, destructive ones in red; tmux keys are shown as
+  `Alt+a` instead of `M-a`.
+- Code of Conduct (Contributor Covenant 2.1).
+
+### Changed
+- The session list is grouped by team: the coordinator row is the team (`▍ backend · sec (2)`, one color
+  per team, using the role column too) and its agents hang below with `├` / `└`, named by their last
+  part (`agy`, `agy-2`).
+- The repository is now `JSNN15/prama-agent` (GitHub redirects the old URLs).
+- `status` aligns its columns by display width (accented headers).
+
 ### Fixed
 - `LICENSE` is now the canonical Apache License 2.0 text (the previous copy differed in one word and
   lacked the appendix, so GitHub could not detect the license).
-
-### Added
-- Code of Conduct (Contributor Covenant 2.1).
+- `PRAMA_TUI_MOUSE` / `PRAMA_TUI_TICK` from config.env were ignored by the menu (read before the
+  configuration was loaded).
 
 ## [6.3.0] - 2026-10-31
 

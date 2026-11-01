@@ -1090,7 +1090,8 @@ _tui_srow() {
         local lbl=${TUI_TLABEL[${S_NAME[i]}]:-} cnt=''
         [ -n "$lbl" ] || { _tui_display_name "${S_NAME[i]}"; lbl=$UI_S; }
         (( ${S_NMEM[i]:-0} )) && cnt=" (${S_NMEM[i]})"
-        ui_fit "$lbl$cnt" $(( HC_NAME - 2 )); name=$UI_S
+        # The team label also takes the role column: the ▍ bar already says "coordinator".
+        ui_fit "$lbl$cnt" $(( HC_NAME - 2 + (HC_ROLE ? HC_ROLE + 1 : 0) )); name=$UI_S
         lead="$tc▍$R "; nc="$tc$T_BOLD" ;;
     ├|└)
         _tui_display_name "${S_NAME[i]}"
@@ -1103,7 +1104,7 @@ _tui_srow() {
     *)  _tui_display_name "${S_NAME[i]}"; ui_fit "$UI_S" "$HC_NAME"; name=$UI_S ;;
   esac
   SR="$base $C_NEON$mark$R $sc●$R $lead$nc$name$R"
-  if (( HC_ROLE )); then
+  if (( HC_ROLE )) && [ "$tr" != T ]; then
     _tui_role_short "${S_ROLE[i]}"; ui_fit "$UI_S" 7; _tui_role_color "${S_ROLE[i]}"
     SR+=" $UI_C$UI_S$R"
   fi
@@ -1789,14 +1790,17 @@ _tui_team_menu() {
   label=$(team_label "$c")
   _tv l_menu 'Menu'; _tv l_teams 'Teams'
   while tmx_has "$c"; do
-    local -a AL=() AM=() AA=() AT=() AK=(cockpit msg grow enter close)
+    local -a AL=() AM=() AA=() AT=() AK=(cockpit msg grow memory note enter close)
     _tui_team_members "$c"
     _tv tx '▦ Open the cockpit';            AL+=("$tx"); _tv tx 'live split view: coordinator, agents and bus'; AM+=("$tx")
     _tv tx '✉ Message the coordinator';     AL+=("$tx"); _tv tx 'a new objective, a question, a change of plan'; AM+=("$tx")
     _tv tx '✚ Add agents';                  AL+=("$tx"); _tv tx 'more workers for this team (they report to its coordinator)'; AM+=("$tx")
+    local nm; nm=$(( $(memory_count "$(state_get "$c" ZONE)" "$(team_name "$c")") + $(memory_count "$(state_get "$c" ZONE)") ))
+    _tv tx '🧠 Team memory (%d)' "$nm";     AL+=("$tx"); _tv tx 'decisions and findings the agents keep; read them in full'; AM+=("$tx")
+    _tv tx '✎ Add a note';                  AL+=("$tx"); _tv tx 'a decision or convention every agent of the team will read'; AM+=("$tx")
     _tv tx '↗ Enter the coordinator';       AL+=("$tx"); _tv tx 'talk to it directly; %s brings you back' "${PRAMA_MENU_KEY//M-/Alt+}"; AM+=("$tx")
     _tv tx '✖ Close the team';              AL+=("$tx"); _tv tx 'stops the coordinator and its %d agent(s)' "${#TM[@]}"; AM+=("$tx")
-    AA=(1 1 1 1 1) AT=("$c" "$c" "$c" "$c" "$c")
+    AA=(1 1 1 1 1 1 1) AT=("$c" "$c" "$c" "$c" "$c" "$c" "$c")
     TUI_LIST_CRUMBS="$C_MUTED$l_menu › $l_teams$T_OFF $C_MUTED›$T_OFF $T_BOLD$label$T_OFF"
     _tv tx 'Team %s' "$label"
     rc=0; tui_list_run "$tx" AL AM AA AT 0 || rc=$?
@@ -1806,6 +1810,15 @@ _tui_team_menu() {
                if ! _tui_run_fullscreen 1 subcmd_cockpit "$c"; then _tv tx 'Could not open the cockpit'; tui_alert "$tx" "${TUI_LAST_ERR:-$c}"; fi ;;
       msg)     TUI_ROLE_CACHE[$c]=coordinator; _tui_task "$c" ;;
       grow)    _tui_team_grow "$c" ;;
+      memory)  tui_suspend
+               { subcmd_memory show "$c"; printf '\n'; } 2>&1 | less -R "-Ps$label  (q) " 2>/dev/null
+               tui_resume ;;
+      note)    local note=''
+               _tv tx 'Note for the memory of %s' "$label"
+               if tui_prompt "$tx" note; then
+                 if ( subcmd_memory add "$c" "$note" ) >/dev/null 2>&1; then _tv tx 'Saved to the memory of %s' "$label"; tui_toast ok "$tx"
+                 else _tv tx 'Could not save the note'; tui_toast err "$tx"; fi
+               fi ;;
       enter)   TUI_LIST_CRUMBS=''; tui_attach_session "$c" ;;
       close)   if _tui_close_team "$c"; then :; else _tui_session_action x "$c"; fi ;;
     esac

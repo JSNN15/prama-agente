@@ -308,4 +308,11 @@ I18N+=(
   ['Agent %s launched in the background']='Agente %s lanzado en segundo plano'
   ['session']='sesión'
   ['↵ enter · esc back']='↵ entrar · esc volver'
+  ['🧠 Team memory (%d)']='🧠 Memoria del equipo (%d)'
+  ['decisions and findings the agents keep; read them in full']='decisiones y hallazgos que guardan los agentes; léelos completos'
+  ['✎ Add a note']='✎ Agregar una nota'
+  ['a decision or convention every agent of the team will read']='una decisión o convención que leerán todos los agentes del equipo'
+  ['Note for the memory of %s']='Nota para la memoria de %s'
+  ['Saved to the memory of %s']='Guardado en la memoria de %s'
+  ['Could not save the note']='No se pudo guardar la nota'
 )
