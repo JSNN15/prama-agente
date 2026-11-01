@@ -1,9 +1,9 @@
 # prama-agent — developer and install targets
 # Without PREFIX/CONF_DIR, install.sh picks system paths as root (/usr/local, /etc/prama-agent)
 # and user paths otherwise (~/.local, ~/.config/prama-agent).
-SHELL_FILES := bin/prama-agent bin/prama-agy bin/prama-claude lib/*.sh install.sh tests/*.sh .github/scripts/*.sh
+SHELL_FILES := bin/prama-agent bin/prama-agy bin/prama-claude lib/*.sh lib/lang/*/*.sh install.sh tests/*.sh .github/scripts/*.sh
 
-.PHONY: all install uninstall test test-matrix lint
+.PHONY: all install uninstall test test-matrix lint i18n
 
 all: lint test
 
@@ -12,7 +12,12 @@ lint:
 	@if command -v shellcheck >/dev/null 2>&1; then \
 	  shellcheck -S warning -x $(SHELL_FILES) && echo "shellcheck: OK"; \
 	else echo "shellcheck no instalado: solo se verificó la sintaxis"; fi
-	@python3 -m py_compile lib/telegram_bot.py tests/test_telegram_bot.py && echo "py_compile: OK"
+	@python3 -m py_compile lib/telegram_bot.py tests/test_telegram_bot.py tools/i18n_check.py && echo "py_compile: OK"
+	@python3 tools/i18n_check.py
+
+# Translation coverage, listing catalog entries the code no longer uses literally.
+i18n:
+	@python3 tools/i18n_check.py --unused
 
 test: lint
 	python3 tests/test_telegram_bot.py

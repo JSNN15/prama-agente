@@ -75,15 +75,15 @@ tg_conf_write() {
   local f dir tmp kv
   f=$(tg_user_conf); dir=${f%/*}
   ensure_private_dir "$dir"
-  tmp=$(umask 077 && mktemp "$dir/.telegram.env.XXXXXX") || { warn "No se pudo escribir en $dir"; return 1; }
+  tmp=$(umask 077 && mktemp "$dir/.telegram.env.XXXXXX") || { warn "$(_t 'Could not write to %s' "$dir")"; return 1; }
   if ! {
-    printf '# prama-agent · puente Telegram (privado, 0600). Formato KEY=valor; no se ejecuta.\n'
+    printf '# %s\n' "$(_t 'prama-agent · Telegram bridge (private, 0600). KEY=value format; never executed.')"
     for kv in "$@"; do
       kv=${kv//[$'\n\r']/}
       printf '%s\n' "$kv"
     done
   } > "$tmp" || ! chmod 600 "$tmp" || ! mv -f "$tmp" "$f"; then
-    rm -f "$tmp"; warn "No se pudo guardar $f"; return 1
+    rm -f "$tmp"; warn "$(_t 'Could not save %s' "$f")"; return 1
   fi
 }
 
@@ -125,19 +125,65 @@ except Exception:
 }
 
 # JSON body for sendMessage (no parse_mode → no markup errors possible).
+# tg_msg_json <chat> <text> [silent:0|1] [keyboard-json]
 tg_msg_json() {
-  printf '{"chat_id":"%s","text":"%s","disable_web_page_preview":true}' \
-    "$(json_escape "$1")" "$(json_escape "$2")"
+  local extra=''
+  [ "${3:-0}" = 1 ] && extra+=',"disable_notification":true'
+  [ -n "${4:-}" ] && extra+=',"reply_markup":{"inline_keyboard":'"$4"'}'
+  printf '{"chat_id":"%s","text":"%s","disable_web_page_preview":true%s}' \
+    "$(json_escape "$1")" "$(json_escape "$2")" "$extra"
+}
+
+# ── Notification level and mute (state files: the watchdog and the bot see changes at once) ──
+# Levels: all (everything, also bus traffic) · important (no bus traffic) · alerts (blocked,
+# stopped, quota) · off. Muted: messages still arrive, silently (no sound), until the given time.
+TG_NOTIFY_LEVELS=(all important alerts off)
+tg_notify_level() {
+  local l=''
+  [ -f "$PRAMA_STATE_HOME/telegram.notify" ] && IFS= read -r l < "$PRAMA_STATE_HOME/telegram.notify"
+  is_in "$l" "${TG_NOTIFY_LEVELS[@]}" || l=${PRAMA_TG_NOTIFY:-all}
+  is_in "$l" "${TG_NOTIFY_LEVELS[@]}" || l=all
+  printf '%s' "$l"
+}
+tg_mute_until() {
+  local u=0
+  [ -f "$PRAMA_STATE_HOME/telegram.mute" ] && IFS= read -r u < "$PRAMA_STATE_HOME/telegram.mute"
+  [[ $u =~ ^[0-9]+$ ]] || u=0
+  printf '%s' "$u"
+}
+
+# _tg_alert_buttons <kind> <session> → inline keyboard JSON (bot callbacks: p view, t talk,
+# r restart (asks first), T team). Empty when the session name cannot be a callback.
+_tg_alert_buttons() {
+  local kind=$1 s=$2 v t r tm
+  valid_session_name "$s" && (( ${#s} <= 60 )) || return 0
+  _tv v '👁 Screen'; _tv t '💬 Talk'; _tv r '🔄 Restart'; _tv tm '👥 Team'
+  case $kind in
+    alert) printf '[[{"text":"%s","callback_data":"p:%s"},{"text":"%s","callback_data":"t:%s"}],[{"text":"%s","callback_data":"r:%s"}]]' \
+             "$v" "$s" "$t" "$s" "$r" "$s" ;;
+    team)  printf '[[{"text":"%s","callback_data":"T:%s"},{"text":"%s","callback_data":"t:%s"}]]' "$tm" "$s" "$t" "$s" ;;
+    *)     printf '[[{"text":"%s","callback_data":"p:%s"},{"text":"%s","callback_data":"t:%s"}]]' "$v" "$s" "$t" "$s" ;;
+  esac
 }
 
 # Sends a push notification to the paired chat. Non-blocking; silent no-op if not configured.
+# telegram_notify <text> [kind] [session] — kind: info (bus traffic) | report | team | alert.
+# With a session, the message carries buttons to act on it from the phone.
 telegram_notify() {
-  local text=${1:-}
+  local text=${1:-} kind=${2:-info} s=${3:-} level silent=0 kb=''
   [ -n "$text" ] || return 0
   command -v curl >/dev/null 2>&1 || return 0
   tg_configured || return 0
+  level=$(tg_notify_level)
+  case $level in
+    off)       return 0 ;;
+    alerts)    [ "$kind" = alert ] || return 0 ;;
+    important) [ "$kind" = info ] && return 0 ;;
+  esac
+  (( $(tg_mute_until) > ${EPOCHSECONDS:-$(date +%s)} )) && silent=1
+  [ -n "$s" ] && kb=$(_tg_alert_buttons "$kind" "$s")
   local body
-  body=$(tg_msg_json "$TG_CHAT_ID" "${text:0:4000}")
+  body=$(tg_msg_json "$TG_CHAT_ID" "${text:0:4000}" "$silent" "$kb")
   ( tg_api "$TG_TOKEN" sendMessage "$body" 10 >/dev/null 2>&1 & ) 2>/dev/null
   return 0
 }
@@ -204,8 +250,9 @@ tg_confirm() {
     tui_confirm "$1"
     return $?
   fi
-  local a=''
-  IFS= read -r -p " $1 [S/n] " a || return 1
+  local a='' yn
+  _tv yn '[Y/n]'
+  IFS= read -r -p " $1 $yn " a || return 1
   [[ -z "$a" || "$a" =~ ^[SsYy] ]]
 }
 
@@ -241,59 +288,59 @@ telegram_setup_wizard() {
     case $1 in
       --chat-id) manual_chat=${2:-}; shift 2 || shift ;;
       --chat-id=*) manual_chat=${1#*=}; shift ;;
-      *) warn "Opción desconocida: $1"; return 1 ;;
+      *) warn "$(_t 'Unknown option: %s' "$1")"; return 1 ;;
     esac
   done
   if [ -n "$manual_chat" ] && ! [[ "$manual_chat" =~ $TG_CHAT_RE ]]; then
-    warn "Chat ID inválido: debe ser numérico."
+    warn "$(_t 'Invalid chat ID: it must be numeric.')"
     return 1
   fi
-  command -v curl >/dev/null 2>&1 || { warn "Se necesita curl para configurar Telegram."; return 1; }
-  tg_have_json || { warn "Se necesita jq o python3 para configurar Telegram."; return 1; }
+  command -v curl >/dev/null 2>&1 || { warn "$(_t 'curl is required to set up Telegram.')"; return 1; }
+  tg_have_json || { warn "$(_t 'jq or python3 is required to set up Telegram.')"; return 1; }
 
   (( IS_TTY )) && printf '\e[?25h'
   printf '\n'
-  box_top "VINCULAR TELEGRAM CON PRAMA AGENT" "SETUP" "$C_NEON"
-  box_row "$C_NEON" "Controla tus agentes desde el celular, 24/7."
-  box_row "$C_NEON" "1. En Telegram abre ${C_BOLD}@BotFather${C_OFF} y envia ${C_LIVE}/newbot${C_OFF}."
-  box_row "$C_NEON" "2. Copia el ${C_BRASS}token HTTP API${C_OFF} y pegalo aqui (no se muestra)."
-  box_bottom "Vacio o 'q' para cancelar" "$C_NEON"
+  box_top "$(_t 'LINK TELEGRAM TO PRAMA AGENT')" "SETUP" "$C_NEON"
+  box_row "$C_NEON" "$(_t 'Control your agents from your phone, 24/7.')"
+  box_row "$C_NEON" "1. $(_t 'In Telegram open %s@BotFather%s and send %s/newbot%s.' "$C_BOLD" "$C_OFF" "$C_LIVE" "$C_OFF")"
+  box_row "$C_NEON" "2. $(_t 'Copy the %sHTTP API token%s and paste it here (it is not shown).' "$C_BRASS" "$C_OFF")"
+  box_bottom "$(_t "Empty or 'q' to cancel")" "$C_NEON"
 
   tg_load
   local token='' old_token=$TG_TOKEN
   if [[ "$old_token" =~ $TG_TOKEN_RE ]]; then
-    printf ' Token actual: ...%s (Enter para conservarlo)\n' "${old_token: -4}"
+    printf ' %s\n' "$(_t 'Current token: ...%s (Enter to keep it)' "${old_token: -4}")"
   fi
-  printf ' Token de @BotFather: '
+  printf ' %s ' "$(_t 'Token from @BotFather:')"
   IFS= read -r -s token || true
   printf '\n'
   token=${token//[[:space:]]/}
   [ -z "$token" ] && [[ "$old_token" =~ $TG_TOKEN_RE ]] && token=$old_token
   if [ -z "$token" ] || [ "$token" = q ] || [ "$token" = Q ]; then
-    warn "Configuración de Telegram cancelada."
+    warn "$(_t 'Telegram setup cancelled.')"
     return 1
   fi
   if ! [[ "$token" =~ $TG_TOKEN_RE ]]; then
-    warn "Formato de token inválido (esperado: 123456789:ABC...)."
+    warn "$(_t 'Invalid token format (expected: 123456789:ABC...).')"
     return 1
   fi
 
-  info_msg "Verificando token con Telegram..."
+  info_msg "$(_t 'Checking the token with Telegram...')"
   local me bot_user
   me=$(tg_api "$token" getMe '' 10) || true
   bot_user=$(tg_json_get '.result.username' <<< "$me")
   if [ -z "$bot_user" ]; then
-    warn "Token rechazado o sin respuesta de Telegram: $(tg_json_get '.description' <<< "$me")"
+    warn "$(_t 'Token rejected, or no answer from Telegram: %s' "$(tg_json_get '.description' <<< "$me")")"
     return 1
   fi
-  ok "Bot verificado: @$bot_user"
+  ok "$(_t 'Bot verified: @%s' "$bot_user")"
 
   # The running bot would steal getUpdates from the pairing loop.
   local was_running=0
   if tmx_has "$(tg_session)"; then
     was_running=1
     tmx_kill "$(tg_session)"
-    info_msg "Bot detenido temporalmente durante la vinculación."
+    info_msg "$(_t 'Bot paused while pairing.')"
   fi
 
   local chat='' uid='' fname='' uname=''
@@ -305,24 +352,24 @@ telegram_setup_wizard() {
     [ -z "$fname" ] && fname=$(tg_json_get '.result.title' <<< "$info")
     uname=$(tg_json_get '.result.username' <<< "$info")
     if [ -z "$(tg_json_get '.result.id' <<< "$info")" ]; then
-      warn "Telegram no reconoce el chat $chat (¿enviaste /start al bot?): $(tg_json_get '.description' <<< "$info")"
+      warn "$(_t 'Telegram does not recognize chat %s (did you send /start to the bot?): %s' "$chat" "$(tg_json_get '.description' <<< "$info")")"
     fi
   else
     local code
     code=$(tg_random_code)
     printf '\n'
-    box_top "PASO FINAL: CODIGO DE VINCULACION" "PAIRING" "$C_LIVE"
-    box_row "$C_LIVE" "Desde tu celular abre ${C_BOLD}@${bot_user}${C_OFF} y envia:"
+    box_top "$(_t 'FINAL STEP: PAIRING CODE')" "PAIRING" "$C_LIVE"
+    box_row "$C_LIVE" "$(_t 'From your phone open %s@%s%s and send:' "$C_BOLD" "$bot_user" "$C_OFF")"
     box_row "$C_LIVE" ""
     box_row "$C_LIVE" "      ${C_BOLD}${C_BRASS}/start ${code}${C_OFF}"
     box_row "$C_LIVE" ""
-    box_row "$C_LIVE" "o abre: https://t.me/${bot_user}?start=${code}"
-    box_row "$C_LIVE" "Esperando ${TG_PAIR_TIMEOUT}s. Solo ese codigo vincula el chat."
-    box_bottom "Ctrl-C para cancelar" "$C_LIVE"
+    box_row "$C_LIVE" "$(_t 'or open: https://t.me/%s?start=%s' "$bot_user" "$code")"
+    box_row "$C_LIVE" "$(_t 'Waiting %ss. Only this code pairs the chat.' "$TG_PAIR_TIMEOUT")"
+    box_bottom "$(_t 'Ctrl-C to cancel')" "$C_LIVE"
     printf ' '
     if ! tg_wait_for_code "$token" "$code"; then
       printf '\n'
-      warn "No llegó el código a tiempo. Reintenta o usa: prama-agent telegram setup --chat-id <id>"
+      warn "$(_t 'The code did not arrive in time. Retry, or use: prama-agent telegram setup --chat-id <id>')"
       (( was_running )) && subcmd_telegram start >/dev/null 2>&1
       return 1
     fi
@@ -333,21 +380,23 @@ telegram_setup_wizard() {
   local who="${fname:-?}"
   [ -n "$uname" ] && who+=" (@$uname)"
   printf '\n'
-  info_msg "Chat encontrado: ${C_BOLD}$who${C_OFF} · chat id $chat${uid:+ · usuario $uid}"
-  if ! tg_confirm "¿Vincular este chat con prama-agent?"; then
-    warn "Vinculación cancelada; no se guardó nada."
+  local uid_txt=''
+  [ -n "$uid" ] && uid_txt=$(_t ' · user %s' "$uid")
+  info_msg "$(_t 'Chat found: %s%s%s · chat id %s%s' "$C_BOLD" "$who" "$C_OFF" "$chat" "$uid_txt")"
+  if ! tg_confirm "$(_t 'Link this chat to prama-agent?')"; then
+    warn "$(_t 'Pairing cancelled; nothing was saved.')"
     (( was_running )) && subcmd_telegram start >/dev/null 2>&1
     return 1
   fi
   [ -z "$uid" ] && [[ "$chat" =~ ^[0-9]+$ ]] && uid=$chat   # private chat id == user id
   tg_conf_write "TELEGRAM_BOT_TOKEN=$token" "TELEGRAM_CHAT_ID=$chat" "TELEGRAM_USER_ID=$uid" \
     "TELEGRAM_BOT_USERNAME=$bot_user" "TELEGRAM_PAIRED_USER=${who//[^[:print:]]/}" || return 1
-  ok "Telegram vinculado con $who (config: $(tg_user_conf))."
-  telegram_notify "✅ Prama Agent v${VERSION:-?} vinculado en $(hostname -s 2>/dev/null || echo host). Escribe /menu para controlar tus agentes."
+  ok "$(_t 'Telegram linked to %s (config: %s).' "$who" "$(tg_user_conf)")"
+  telegram_notify "$(_t '✅ Prama Agent v%s linked on %s. Send /menu to control your agents.' "${VERSION:-?}" "$(hostname -s 2>/dev/null || echo host)")"
   if command -v python3 >/dev/null 2>&1; then
     subcmd_telegram restart
   else
-    warn "python3 no está instalado: las notificaciones funcionan, pero el bot interactivo no."
+    warn "$(_t 'python3 is not installed: notifications work, but the interactive bot does not.')"
   fi
 }
 
@@ -362,19 +411,20 @@ tg_bot_script() {
 run_telegram_bot_daemon() {
   local py=${PRAMA_TG_PYTHON:-python3}
   local delay=${PRAMA_TG_RESTART_DELAY:-5} max_rapid=${PRAMA_TG_MAX_CRASHES:-5}
-  command -v "$py" >/dev/null 2>&1 || die "python3 no está instalado (requerido solo para el bot de Telegram)."
-  tg_configured || die "Telegram no está configurado. Ejecuta: prama-agent telegram setup"
+  command -v "$py" >/dev/null 2>&1 || die "$(_t 'python3 is not installed (required only for the Telegram bot).')"
+  tg_configured || die "$(_t 'Telegram is not configured. Run: prama-agent telegram setup')"
   local script
   script=$(tg_bot_script)
-  [ -r "$script" ] || die "No se encuentra $script"
+  [ -r "$script" ] || die "$(_t 'Not found: %s' "$script")"
   ensure_private_dir "$PRAMA_STATE_HOME"
   local logf
   logf=$(tg_log_file)
   if [ -f "$logf" ] && [ "$(wc -c < "$logf")" -gt 1048576 ]; then mv -f "$logf" "$logf.1"; fi
   ( umask 077; : >> "$logf" )
 
+  # PRAMA_UI_LANG (resolved by i18n_init) selects the bot's catalog: lib/lang/<lang>/telegram_bot.json
   export PRAMA_TG_CONF="$TG_CONF_FILE" SELF_PATH PRAMA_TMUX_SOCKET PRAMA_BUS_DIR PRAMA_STATE_HOME \
-    PRAMA_SESSION_PREFIX PRAMA_TG_LOG="$logf"
+    PRAMA_SESSION_PREFIX PRAMA_TG_LOG="$logf" PRAMA_UI_LANG
   unset TG_TOKEN
   local rapid=0 started rc
   while true; do
@@ -382,15 +432,15 @@ run_telegram_bot_daemon() {
     "$py" -u "$script"
     rc=$?
     case $rc in
-      0) printf '%s [daemon] bot detenido (rc=0)\n' "$(date '+%F %T')" | tee -a "$logf" >&2; return 0 ;;
-      3) printf '%s [daemon] error de configuración (rc=3); no se reinicia\n' "$(date '+%F %T')" | tee -a "$logf" >&2; return 3 ;;
+      0) printf '%s [daemon] %s\n' "$(date '+%F %T')" "$(_t 'bot stopped (rc=0)')" | tee -a "$logf" >&2; return 0 ;;
+      3) printf '%s [daemon] %s\n' "$(date '+%F %T')" "$(_t 'configuration error (rc=3); not restarting')" | tee -a "$logf" >&2; return 3 ;;
     esac
     if (( SECONDS - started < 60 )); then (( rapid++ )); else rapid=1; fi
     if (( rapid >= max_rapid )); then
-      printf '%s [daemon] %d caídas seguidas; me rindo. Revisa: prama-agent telegram logs\n' "$(date '+%F %T')" "$rapid" | tee -a "$logf" >&2
+      printf '%s [daemon] %s\n' "$(date '+%F %T')" "$(_t '%d crashes in a row; giving up. Check: prama-agent telegram logs' "$rapid")" | tee -a "$logf" >&2
       return 1
     fi
-    printf '%s [daemon] bot caído (rc=%d); reinicio en %ss (%d/%d)\n' "$(date '+%F %T')" "$rc" "$delay" "$rapid" "$max_rapid" | tee -a "$logf" >&2
+    printf '%s [daemon] %s\n' "$(date '+%F %T')" "$(_t 'bot crashed (rc=%d); restarting in %ss (%d/%d)' "$rc" "$delay" "$rapid" "$max_rapid")" | tee -a "$logf" >&2
     sleep "$delay"
   done
 }
@@ -399,12 +449,12 @@ tg_start() {
   local sess
   sess=$(tg_session)
   if ! tg_configured; then
-    warn "Telegram no está configurado. Ejecuta: prama-agent telegram setup"
+    warn "$(_t 'Telegram is not configured. Run: prama-agent telegram setup')"
     return 1
   fi
-  command -v python3 >/dev/null 2>&1 || { warn "python3 no está instalado (requerido solo para el bot de Telegram)."; return 1; }
+  command -v python3 >/dev/null 2>&1 || { warn "$(_t 'python3 is not installed (required only for the Telegram bot).')"; return 1; }
   if tmx_has "$sess"; then
-    ok "El bot de Telegram ya está activo ($sess)."
+    ok "$(_t 'The Telegram bot is already running (%s).' "$sess")"
     return 0
   fi
   declare -F ensure_tmux_conf >/dev/null && ensure_tmux_conf
@@ -413,21 +463,24 @@ tg_start() {
               "PRAMA_BUS_DIR=$PRAMA_BUS_DIR" "PRAMA_TMUX_CONF=$PRAMA_TMUX_CONF"
               "PRAMA_SESSION_PREFIX=$PRAMA_SESSION_PREFIX")
   [ -n "${XDG_CONFIG_HOME:-}" ] && envs+=("XDG_CONFIG_HOME=$XDG_CONFIG_HOME")
+  # The interface language as resolved here (config.env, PRAMA_LANG or the locale), so the bot
+  # speaks it whatever the tmux server's environment; the locale too, for PRAMA_LANG=auto.
+  envs+=("PRAMA_LANG=$PRAMA_UI_LANG")
   local v
-  for v in PRAMA_TG_API_BASE PRAMA_TG_PYTHON PRAMA_TG_RESTART_DELAY PRAMA_TG_MAX_CRASHES; do
+  for v in PRAMA_TG_API_BASE PRAMA_TG_PYTHON PRAMA_TG_RESTART_DELAY PRAMA_TG_MAX_CRASHES LC_ALL LC_MESSAGES LANG; do
     [ -n "${!v:-}" ] && envs+=("$v=${!v}")
   done
   local cmd
   printf -v cmd '%q ' "${envs[@]}" "$SELF_PATH" telegram daemon
   if ! tmx new-session -d -s "$sess" "$cmd"; then
-    warn "No se pudo crear la sesión tmux $sess."
+    warn "$(_t 'Could not create the tmux session %s.' "$sess")"
     return 1
   fi
   sleep 1
   if tmx_has "$sess"; then
-    ok "Bot de Telegram iniciado en la sesión '$sess' (@${TG_BOT_USER:-bot})."
+    ok "$(_t "Telegram bot started in session '%s' (@%s)." "$sess" "${TG_BOT_USER:-bot}")"
   else
-    warn "El bot terminó al arrancar. Revisa: prama-agent telegram logs"
+    warn "$(_t 'The bot exited on startup. Check: prama-agent telegram logs')"
     return 1
   fi
 }
@@ -437,9 +490,9 @@ tg_stop() {
   sess=$(tg_session)
   if tmx_has "$sess"; then
     tmx_kill "$sess"
-    ok "Bot de Telegram detenido."
+    ok "$(_t 'Telegram bot stopped.')"
   else
-    info_msg "El bot de Telegram no estaba activo."
+    info_msg "$(_t 'The Telegram bot was not running.')"
   fi
 }
 
@@ -448,44 +501,47 @@ tg_status() {
   local sess c=$C_BORDER_HI
   sess=$(tg_session)
   printf '\n'
-  box_top "PUENTE TELEGRAM" "ESTADO" "$c"
+  box_top "$(_t 'TELEGRAM BRIDGE')" "$(_t 'STATUS')" "$c"
   if tg_configured; then
     box_row "$c" "Bot:      ${C_LIVE}${C_BOLD}@${TG_BOT_USER:-?}${C_OFF}"
-    box_row "$c" "Vinculado: ${TG_PAIRED:-?} · chat ${C_NEON}${TG_CHAT_ID}${C_OFF}"
+    box_row "$c" "$(_t 'Paired:   %s · chat %s%s%s' "${TG_PAIRED:-?}" "$C_NEON" "$TG_CHAT_ID" "$C_OFF")"
     box_row "$c" "Config:   ${C_MUTED}${TG_CONF_FILE}${C_OFF}"
   else
-    box_row "$c" "Estado:   ${C_BRASS}no configurado (prama-agent telegram setup)${C_OFF}"
+    box_row "$c" "$(_t 'Status:   %snot configured (prama-agent telegram setup)%s' "$C_BRASS" "$C_OFF")"
   fi
   if tmx_has "$sess"; then
-    box_row "$c" "Daemon:   ${C_LIVE}${C_BOLD}● ACTIVO${C_OFF} (sesión $sess)"
+    box_row "$c" "$(_t 'Daemon:   %s● RUNNING%s (session %s)' "${C_LIVE}${C_BOLD}" "$C_OFF" "$sess")"
   else
-    box_row "$c" "Daemon:   ${C_ERR}○ DETENIDO${C_OFF}"
+    box_row "$c" "$(_t 'Daemon:   %s○ STOPPED%s' "$C_ERR" "$C_OFF")"
   fi
-  command -v python3 >/dev/null 2>&1 || box_row "$c" "${C_BRASS}python3 no instalado: el bot interactivo no puede correr${C_OFF}"
+  command -v python3 >/dev/null 2>&1 || box_row "$c" "$(_t '%spython3 not installed: the interactive bot cannot run%s' "$C_BRASS" "$C_OFF")"
   box_row "$c" "Log:      ${C_MUTED}$(tg_log_file)${C_OFF}"
-  box_bottom "En Telegram escribe /menu" "$c"
+  box_bottom "$(_t 'In Telegram, send /menu')" "$c"
   printf '\n'
 }
 
 tg_test() {
-  if ! tg_configured; then warn "Telegram no está configurado."; return 1; fi
+  if ! tg_configured; then warn "$(_t 'Telegram is not configured.')"; return 1; fi
   local me res
   me=$(tg_api "$TG_TOKEN" getMe '' 10) || true
   if [ -z "$(tg_json_get '.result.username' <<< "$me")" ]; then
-    warn "getMe falló: $(tg_json_get '.description' <<< "$me")"
+    warn "$(_t 'getMe failed: %s' "$(tg_json_get '.description' <<< "$me")")"
     return 1
   fi
-  res=$(tg_api "$TG_TOKEN" sendMessage "$(tg_msg_json "$TG_CHAT_ID" "✦ Prueba desde Prama Agent ($(hostname -s 2>/dev/null)): conexión operativa.")" 10) || true
+  local msg
+  msg=$(_t '✦ Test from Prama Agent (%s): connection working.' "$(hostname -s 2>/dev/null)")
+  res=$(tg_api "$TG_TOKEN" sendMessage "$(tg_msg_json "$TG_CHAT_ID" "$msg")" 10) || true
   if [ "$(tg_json_get '.ok' <<< "$res")" = true ]; then
-    ok "Mensaje de prueba entregado (@$(tg_json_get '.result.username' <<< "$me") → chat $TG_CHAT_ID)."
+    ok "$(_t 'Test message delivered (@%s → chat %s).' "$(tg_json_get '.result.username' <<< "$me")" "$TG_CHAT_ID")"
   else
-    warn "sendMessage falló: $(tg_json_get '.description' <<< "$res")"
+    warn "$(_t 'sendMessage failed: %s' "$(tg_json_get '.description' <<< "$res")")"
     return 1
   fi
 }
 
 tg_usage() {
-  cat <<EOF
+  case $PRAMA_UI_LANG in
+    es) cat <<EOF
 Uso: prama-agent telegram <acción>
   setup [--chat-id <id>]  Vincular bot (código de un solo uso, o chat id manual)
   start | stop | restart  Controlar el bot 24/7 (sesión tmux $(tg_session))
@@ -493,37 +549,57 @@ Uso: prama-agent telegram <acción>
   logs [-f] [N]           Ver el log del bot
   test                    Enviar un mensaje de prueba (síncrono)
   notify <texto>          Enviar una notificación
+  alerts [nivel]          Qué avisa el bot: all | important (sin tráfico del bus) | alerts | off
+  mute [30m|1h|8h|off]    Avisos sin sonido por un tiempo (también /silencio en el bot)
   menu                    Menú interactivo
 Requiere curl; el bot interactivo requiere además python3.
 EOF
+    ;;
+    *) cat <<EOF
+Usage: prama-agent telegram <action>
+  setup [--chat-id <id>]  Pair the bot (one-time code, or a manual chat id)
+  start | stop | restart  Control the 24/7 bot (tmux session $(tg_session))
+  status                  Bridge status
+  logs [-f] [N]           Show the bot log
+  test                    Send a test message (synchronous)
+  notify <text>           Send a notification
+  alerts [level]          What the bot sends: all | important (no bus traffic) | alerts | off
+  mute [30m|1h|8h|off]    Notifications without sound for a while (also /mute in the bot)
+  menu                    Interactive menu
+Needs curl; the interactive bot also needs python3.
+EOF
+    ;;
+  esac
 }
 
 # ── TUI submenu ─────────────────────────────────────────────────────────────
 tg_menu() {
   while true; do
     tg_load
-    local running=0 configured=0 st="NO CONFIGURADO"
+    local running=0 configured=0 st
+    _tv st 'NOT CONFIGURED'
     tmx_has "$(tg_session)" && running=1
     tg_configured && configured=1
-    if (( running )); then st="ACTIVO @${TG_BOT_USER:-bot}"
-    elif (( configured )); then st="CONFIGURADO, DETENIDO"
+    if (( running )); then _tv st 'RUNNING @%s' "${TG_BOT_USER:-bot}"
+    elif (( configured )); then _tv st 'CONFIGURED, STOPPED'
     fi
-    local TG_LABELS=("VOLVER" "VINCULAR BOT" "INICIAR BOT" "DETENER BOT" "REINICIAR BOT" "ENVIAR PRUEBA" "VER LOG" "ESTADO")
+    local TG_LABELS=("$(_t 'BACK')" "$(_t 'PAIR BOT')" "$(_t 'START BOT')" "$(_t 'STOP BOT')" "$(_t 'RESTART BOT')"
+                     "$(_t 'SEND TEST')" "$(_t 'VIEW LOG')" "$(_t 'STATUS')")
     local TG_METAS=(
-      "Regresar al menu principal"
-      "Token de @BotFather + codigo de vinculacion [$st]"
-      "Arrancar el bot 24/7 en segundo plano"
-      "Detener el bot"
-      "Reiniciar el bot (recarga la configuracion)"
-      "Enviar un mensaje de prueba ahora"
-      "Ultimas lineas del log del bot"
-      "Configuracion y estado del daemon"
+      "$(_t 'Back to the main menu')"
+      "$(_t 'Token from @BotFather + pairing code [%s]' "$st")"
+      "$(_t 'Start the 24/7 bot in the background')"
+      "$(_t 'Stop the bot')"
+      "$(_t 'Restart the bot (reloads the configuration)')"
+      "$(_t 'Send a test message now')"
+      "$(_t 'Last lines of the bot log')"
+      "$(_t 'Daemon configuration and status')"
     )
     local TG_AVAIL=(1 1 "$(( configured && !running ))" "$running" "$configured" "$configured" 1 1)
     local TG_TARGETS=("" "" "" "" "" "" "" "")
     local rc=0
     CHOICE=0
-    tui_select_box "telegram" "CONTROL POR TELEGRAM ($st)" TG_LABELS TG_METAS TG_AVAIL TG_TARGETS || rc=$?
+    tui_select_box "telegram" "$(_t 'TELEGRAM CONTROL (%s)' "$st")" TG_LABELS TG_METAS TG_AVAIL TG_TARGETS || rc=$?
     (( rc == 3 )) && continue
     (( rc == 2 )) && return 0
     (( rc != 0 )) && return 0
@@ -535,10 +611,10 @@ tg_menu() {
       3) tg_stop || true ;;
       4) tg_stop >/dev/null; tg_start || true ;;
       5) tg_test || true ;;
-      6) tail -n 40 "$(tg_log_file)" 2>/dev/null || info_msg "Sin log todavía." ;;
+      6) tail -n 40 "$(tg_log_file)" 2>/dev/null || info_msg "$(_t 'No log yet.')" ;;
       7) tg_status ;;
     esac
-    printf '\n Presiona cualquier tecla para continuar...'
+    printf '\n %s' "$(_t 'Press any key to continue...')"
     IFS= read -rsn1 _ || true
   done
 }
@@ -559,14 +635,40 @@ subcmd_telegram() {
         case $1 in -f|--follow) follow=1 ;; *[!0-9]*) ;; *) n=$1 ;; esac
         shift
       done
-      [ -f "$logf" ] || { info_msg "Sin log todavía ($logf)."; return 0; }
+      [ -f "$logf" ] || { info_msg "$(_t 'No log yet (%s).' "$logf")"; return 0; }
       if (( follow )); then tail -n "$n" -f "$logf"; else tail -n "$n" "$logf"; fi
       ;;
+    alerts|level)
+      # telegram alerts [all|important|alerts|off] [--porcelain → "level|mute_until"]
+      local l=${1:-}
+      if [ "$l" = --porcelain ]; then printf '%s|%s\n' "$(tg_notify_level)" "$(tg_mute_until)"; return 0; fi
+      if [ -n "$l" ]; then
+        is_in "$l" "${TG_NOTIFY_LEVELS[@]}" || die "$(_t 'Unknown level: %s (use: %s)' "$l" "${TG_NOTIFY_LEVELS[*]}")"
+        ensure_private_dir "$PRAMA_STATE_HOME"
+        printf '%s\n' "$l" > "$PRAMA_STATE_HOME/telegram.notify"
+      fi
+      _tg_level_desc "$(tg_notify_level)"
+      ;;
+    mute|silence)
+      # telegram mute [30m|1h|8h|24h|off]: notifications arrive without sound until then
+      local d=${1:-1h} secs u
+      case $d in
+        off|0|no) secs=0 ;;
+        *[0-9]m)  secs=$(( ${d%m} * 60 )) ;;
+        *[0-9]h)  secs=$(( ${d%h} * 3600 )) ;;
+        *)        die "$(_t 'Invalid duration: %s (e.g. 30m, 1h, 8h, off)' "$d")" ;;
+      esac
+      ensure_private_dir "$PRAMA_STATE_HOME"
+      u=0; (( secs > 0 )) && u=$(( ${EPOCHSECONDS:-$(date +%s)} + secs ))
+      printf '%s\n' "$u" > "$PRAMA_STATE_HOME/telegram.mute"
+      if (( u )); then ok "$(_t 'Muted until %s (messages arrive without sound).' "$(date -d "@$u" '+%H:%M' 2>/dev/null || printf '%s' "$d")")"
+      else ok "$(_t 'Sound back on.')"; fi
+      ;;
     notify)
-      tg_configured || { warn "Telegram no está configurado."; return 1; }
-      [ -n "${*:-}" ] || { warn "Uso: prama-agent telegram notify <texto>"; return 1; }
+      tg_configured || { warn "$(_t 'Telegram is not configured.')"; return 1; }
+      [ -n "${*:-}" ] || { warn "$(_t 'Usage: prama-agent telegram notify <text>')"; return 1; }
       telegram_notify "$*"
-      ok "Notificación enviada."
+      ok "$(_t 'Notification sent.')"
       ;;
     test)    tg_test ;;
     daemon)  run_telegram_bot_daemon ;;
@@ -574,6 +676,15 @@ subcmd_telegram() {
       if [ -t 0 ] && declare -F tui_select_box >/dev/null; then tg_menu; else tg_status; fi
       ;;
     -h|--help|help) tg_usage ;;
-    *) warn "Acción desconocida: $action"; tg_usage; return 1 ;;
+    *) warn "$(_t 'Unknown action: %s' "$action")"; tg_usage; return 1 ;;
+  esac
+}
+
+_tg_level_desc() {
+  case $1 in
+    all)       ok "$(_t 'Notifications: all (alerts, reports, teams and bus traffic)')" ;;
+    important) ok "$(_t 'Notifications: important (alerts, reports and teams; no bus traffic)')" ;;
+    alerts)    ok "$(_t 'Notifications: alerts only (blocked or stopped agents, quota)')" ;;
+    off)       ok "$(_t 'Notifications: off')" ;;
   esac
 }

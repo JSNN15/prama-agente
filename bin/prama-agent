@@ -5,7 +5,7 @@
 
 set -u
 
-VERSION="6.3.0"
+VERSION="6.4.0"
 
 # Status line fast path: agy redraws it several times per second, so the last line is reused
 # for PRAMA_SL_MIN seconds with bash builtins only (no forks, before anything else runs).
@@ -29,7 +29,11 @@ LIB_DIR="$REPO_ROOT/lib"
 export SELF_PATH LIB_DIR VERSION
 
 if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 4) )); then
-  echo "prama-agent requiere bash >= 4.4 (tienes $BASH_VERSION)" >&2
+  # The catalogs need bash 4 (associative arrays): this one message picks its language by hand.
+  case ${PRAMA_LANG:-}:${LC_ALL:-${LC_MESSAGES:-${LANG:-}}} in
+    es:*|auto:es*|:es*) echo "prama-agent requiere bash >= 4.4 (tienes $BASH_VERSION)" >&2 ;;
+    *)                  echo "prama-agent requires bash >= 4.4 (this is $BASH_VERSION)" >&2 ;;
+  esac
   exit 1
 fi
 
@@ -66,18 +70,18 @@ if [ "${1:-}" = "--internal-statusline" ]; then
   exit 0
 fi
 
-for _m in core ui agents roles bus swarm health fleet feedback setup telegram tui; do
+for _m in core ui agents roles bus swarm health fleet feedback memory setup prefs telegram tui; do
   # shellcheck source=/dev/null
   source "$LIB_DIR/$_m.sh"
 done
 
 prama_init
-command -v tmux >/dev/null 2>&1 || die "tmux no está instalado (sudo apt install tmux)."
+command -v tmux >/dev/null 2>&1 || die "$(_t 'tmux is not installed (sudo apt install tmux).')"
 
 # ── Small helpers ───────────────────────────────────────────────────────────
 pause_key() {
   (( IS_TTY )) || return 0
-  printf '\n %s%s Presiona una tecla para volver %s' "$KEY_BADGE" " ↵ " "$C_OFF"
+  printf '\n %s%s %s %s' "$KEY_BADGE" " ↵ " "$(_t 'Press any key to go back')" "$C_OFF"
   IFS= read -rsn1 _ || true
 }
 
@@ -93,12 +97,81 @@ match_one() {
 
 require_session() {
   local s=${1:-}
-  [ -n "$s" ] || die "Falta el nombre de la sesión. Mira las activas con: prama-agent status"
-  tmx_has "$s" || die "La sesión '$s' no existe en el servidor prama. Activas: $(prama_sessions | tr '\n' ' ')"
+  [ -n "$s" ] || die "$(_t 'Missing the session name. See the active ones with: prama-agent status')"
+  tmx_has "$s" || die "$(_t "Session '%s' does not exist on the prama server. Active: %s" "$s" "$(prama_sessions | tr '\n' ' ')")"
 }
 
 # ── Subcommands ─────────────────────────────────────────────────────────────
 usage() {
+  local perm=ask
+  (( PRAMA_SKIP_PERMISSIONS )) && perm=yolo
+  case $PRAMA_UI_LANG in
+    es) _usage_es "$perm" ;;
+    *)  _usage_en "$perm" ;;
+  esac
+}
+
+# _usage_<lang> <default permission mode> — the help screen, one text per language.
+_usage_en() {
+  cat <<EOF
+${C_BOLD}prama-agent v$VERSION${C_OFF} — control plane for terminal coding agents
+
+${C_BOLD}FIRST STEPS${C_OFF}
+  setup                  Wizard: agents and login, zones, permissions (re-runnable; --check only checks)
+  login [agent]          Login status of each agent / sign in (claude, agy)
+  zones [add <name> <dir> | remove <name> | scan]   Work folders under a short name
+  lang [en|es|auto]      Interface language       theme [name]  Color theme (no name: list them)
+
+${C_BOLD}USAGE${C_OFF}
+  prama-agent                          Opens the interactive interface
+  prama-agent <agent> <zone> [opts] [-- agent args]
+  prama-agent <subcommand> [args]
+
+${C_BOLD}LAUNCH${C_OFF}  agents: ${AGENTS[*]}  ·  zones: ${ZONES[*]}
+  --role, -O <role>      executor | coordinator | reader | daemon
+  --ask | --plan | --yolo  permissions (default: $1)
+  --remote | --no-remote   native Remote Control (claude/agy)
+  --model, -m <model>    claude: opus|sonnet|haiku…  agy: prama-agent fleet models agy
+  --effort <level>       low | medium | high | xhigh | max (claude)
+  --preset <name>        profile with skills/plugins/prompt (prama-agent fleet presets)
+  --profile, -P <prof>   ${AVAILABLE_PROFILES[*]} (endpoints for claude)
+  --worktree, -w <branch>  isolate in a git worktree (outside the repo)
+  --name, -n <session>   custom session name
+  --bg, -d               launch in the background   --porcelain  print only the name
+  --parallel             another instance if one already exists
+  --loop <sec> --task "<t>"  daemon with a recurring task   --oneshot  run once
+  --direct               no tmux (direct exec)      --dry-run  show the command
+
+${C_BOLD}SESSIONS${C_OFF}
+  status | ls            Fleet panel                   sessions --json   Listing for scripts
+  attach | a [session]   Connect (Ctrl+b d or $PRAMA_MENU_KEY to leave)
+  logs <session> [N]     Last N lines                  capture <session> [N]  Plain text
+  send <session> "<txt>" Type into the agent           restart <session>  Relaunch
+  stop <session> | stop --all [-y]
+
+${C_BOLD}FLEET${C_OFF}  (what the coordinator uses to manage agents)
+  fleet status [--json]  State, blockers (login/quota/credit/model) and model of each agent
+  fleet spawn <agent> <zone> [--model M] [--preset P] [--task "…"]   Launch an extra agent
+  fleet model <session> <model>   fleet edit <session> …   fleet restart|kill <session>
+  fleet presets | models [agent] | watchdog [status|start|stop|logs] | hooks [status|install|uninstall]
+
+${C_BOLD}TEAMS${C_OFF}
+  swarm <zone> --team <name> [--workers agy:3] [--task "goal"]   Coordinator + N agents
+  teams                  Active teams (several per zone: architecture, security, docs…)
+  swarm stop <zone> [--team <name>|--all]      cockpit [zone|session] [--team <name>]
+  bus status|assign|report|inbox|broadcast|watch|clear|help            Messages between agents
+  memory [show|add|clear] [<zone>|<session>] [--team T] [--zone-wide]   Team and zone memory (survives restarts)
+  Inside tmux: $PRAMA_MENU_KEY menu · $PRAMA_NAV_KEY agent list · $PRAMA_COCKPIT_KEY cockpit ⇄ agent · Ctrl+b n/p next
+
+${C_BOLD}SYSTEM${C_OFF}
+  worktree list|create|remove|prune   profiles   mcp   agents [--json]
+  telegram setup|start|stop|restart|status|logs|test|notify|alerts|mute   doctor [--restore-tmux-conf]
+  feedback "<bug>" | list | show <id> | export <id> | close <id>   prama bug reports (from agents)
+  completion bash        Shell completion         info  Quick guide           update [version]  Update
+EOF
+}
+
+_usage_es() {
   cat <<EOF
 ${C_BOLD}prama-agent v$VERSION${C_OFF} — control plane para agentes de código en terminal
 
@@ -106,6 +179,7 @@ ${C_BOLD}PRIMEROS PASOS${C_OFF}
   setup                  Asistente: agentes y sesión, zonas, permisos (repetible; --check solo revisa)
   login [agente]         Estado de sesión de cada agente / iniciar sesión (claude, agy)
   zones [add <nombre> <carpeta> | remove <nombre> | scan]   Carpetas de trabajo con nombre corto
+  lang [en|es|auto]      Idioma de la interfaz    theme [nombre]  Tema de colores (sin nombre: los lista)
 
 ${C_BOLD}USO${C_OFF}
   prama-agent                          Abre la interfaz interactiva
@@ -114,7 +188,7 @@ ${C_BOLD}USO${C_OFF}
 
 ${C_BOLD}LANZAR${C_OFF}  agentes: ${AGENTS[*]}  ·  zonas: ${ZONES[*]}
   --role, -O <rol>       executor | coordinator | reader | daemon
-  --ask | --plan | --yolo  permisos (por defecto: $( (( PRAMA_SKIP_PERMISSIONS )) && echo yolo || echo ask ))
+  --ask | --plan | --yolo  permisos (por defecto: $1)
   --remote | --no-remote   Remote Control nativo (claude/agy)
   --model, -m <modelo>   claude: opus|sonnet|haiku…  agy: prama-agent fleet models agy
   --effort <nivel>       low | medium | high | xhigh | max (claude)
@@ -145,11 +219,12 @@ ${C_BOLD}EQUIPOS${C_OFF}
   teams                  Equipos activos (varios por zona: arquitectura, seguridad, docs…)
   swarm stop <zona> [--team <nombre>|--all]      cockpit [zona|sesión] [--team <nombre>]
   bus status|assign|report|inbox|broadcast|watch|clear|help            Mensajes entre agentes
+  memory [show|add|clear] [<zona>|<sesión>] [--team T] [--zone-wide]   Memoria del equipo y la zona (sobrevive reinicios)
   Dentro de tmux: $PRAMA_MENU_KEY menú · $PRAMA_NAV_KEY lista de agentes · $PRAMA_COCKPIT_KEY cockpit ⇄ agente · Ctrl+b n/p siguiente
 
 ${C_BOLD}SISTEMA${C_OFF}
   worktree list|create|remove|prune   profiles   mcp   agents [--json]
-  telegram setup|start|stop|restart|status|logs|test|notify   doctor [--restore-tmux-conf]
+  telegram setup|start|stop|restart|status|logs|test|notify|alerts|mute   doctor [--restore-tmux-conf]
   feedback "<fallo>" | list | show <id> | export <id> | close <id>   Reportes de fallos de prama (agentes)
   completion bash        Autocompletado           info  Guía rápida           update [versión]  Actualizar
 EOF
@@ -159,51 +234,51 @@ EOF
 subcmd_update() {
   local ref=${1:-} before after
   git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1 \
-    || die "Esta instalación no es un clon de git ($REPO_ROOT): reinstala con el instalador de una línea."
+    || die "$(_t 'This installation is not a git clone (%s): reinstall with the one-line installer.' "$REPO_ROOT")"
   [ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ] \
-    || die "Hay cambios locales en $REPO_ROOT; guárdalos (git stash) antes de actualizar."
+    || die "$(_t 'There are local changes in %s; stash them (git stash) before updating.' "$REPO_ROOT")"
   before=$(git -C "$REPO_ROOT" rev-parse --short HEAD)
-  git -C "$REPO_ROOT" fetch -q --tags origin || die "No se pudo contactar el repositorio remoto."
-  if [ -n "$ref" ]; then git -C "$REPO_ROOT" checkout -q "$ref" || die "No existe la versión '$ref'."
-  else git -C "$REPO_ROOT" pull -q --ff-only || die "No se pudo avanzar la rama actual (¿divergió?)."; fi
+  git -C "$REPO_ROOT" fetch -q --tags origin || die "$(_t 'Could not reach the remote repository.')"
+  if [ -n "$ref" ]; then git -C "$REPO_ROOT" checkout -q "$ref" || die "$(_t "Version '%s' does not exist." "$ref")"
+  else git -C "$REPO_ROOT" pull -q --ff-only || die "$(_t 'Could not fast-forward the current branch (has it diverged?).')"; fi
   after=$(git -C "$REPO_ROOT" rev-parse --short HEAD)
-  if [ "$before" = "$after" ]; then ok "Ya tienes la última versión (v$VERSION, $after)."
-  else ok "Actualizado: $before → $after ($("$SELF_PATH" --version))."; fi
+  if [ "$before" = "$after" ]; then ok "$(_t 'You already have the latest version (v%s, %s).' "$VERSION" "$after")"
+  else ok "$(_t 'Updated: %s → %s (%s).' "$before" "$after" "$("$SELF_PATH" --version)")"; fi
   "$SELF_PATH" doctor >/dev/null 2>&1 || true   # regenerates tmux.conf, hooks, migrations
   if [ "$before" != "$after" ]; then
     # Long-running prama processes keep the code they started with: restart them on the new one.
     if watchdog_running; then
       "$SELF_PATH" fleet watchdog stop >/dev/null 2>&1; "$SELF_PATH" fleet watchdog start >/dev/null 2>&1 \
-        && ok "Watchdog reiniciado con la nueva versión."
+        && ok "$(_t 'Watchdog restarted on the new version.')"
     fi
     if tmx_has "${PRAMA_SESSION_PREFIX}-telegram-bot"; then
-      "$SELF_PATH" telegram restart >/dev/null 2>&1 && ok "Bot de Telegram reiniciado con la nueva versión."
+      "$SELF_PATH" telegram restart >/dev/null 2>&1 && ok "$(_t 'Telegram bot restarted on the new version.')"
     fi
   fi
-  info_msg "Los agentes en curso usan la versión anterior hasta que los reinicies (prama-agent fleet restart <sesión>)."
+  info_msg "$(_t 'Running agents keep the previous version until you restart them (prama-agent fleet restart <session>).')"
 }
 
 subcmd_info() {
   refresh_dimensions
   printf '\n'
-  box_top "❖ GUIA RAPIDA" "v$VERSION" "$C_BORDER_HI"
-  box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}Volver al menú desde un agente${C_OFF}"
-  box_row "$C_BORDER_HI" "  Toca ${C_NEON}◂ MENU${C_OFF} en la barra inferior, o pulsa ${KEY_BADGE} $PRAMA_MENU_KEY ${C_OFF} / ${KEY_BADGE} Ctrl+b d ${C_OFF}."
-  box_row "$C_BORDER_HI" "  El agente sigue vivo en segundo plano."
-  box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}Moverte entre agentes${C_OFF}"
-  box_row "$C_BORDER_HI" "  ${KEY_BADGE} $PRAMA_NAV_KEY ${C_OFF} lista de agentes · ${KEY_BADGE} $PRAMA_COCKPIT_KEY ${C_OFF} cockpit del equipo ⇄ agente · ${KEY_BADGE} Ctrl+b n ${C_OFF} siguiente"
+  box_top "❖ $(_t 'QUICK GUIDE')" "v$VERSION" "$C_BORDER_HI"
+  box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}$(_t 'Back to the menu from an agent')${C_OFF}"
+  box_row "$C_BORDER_HI" "  $(_t 'Tap %s in the bottom bar, or press %s / %s.' "${C_NEON}◂ MENU${C_OFF}" "${KEY_BADGE} $PRAMA_MENU_KEY ${C_OFF}" "${KEY_BADGE} Ctrl+b d ${C_OFF}")"
+  box_row "$C_BORDER_HI" "  $(_t 'The agent keeps running in the background.')"
+  box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}$(_t 'Move between agents')${C_OFF}"
+  box_row "$C_BORDER_HI" "  $(_t '%s agent list · %s team cockpit ⇄ agent · %s next' "${KEY_BADGE} $PRAMA_NAV_KEY ${C_OFF}" "${KEY_BADGE} $PRAMA_COCKPIT_KEY ${C_OFF}" "${KEY_BADGE} Ctrl+b n ${C_OFF}")"
   box_sep "$C_BORDER_HI"
-  box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}Agentes que colaboran${C_OFF}"
-  box_row "$C_BORDER_HI" "  ${KEY_BADGE} s ${C_OFF} en el menú o ${C_NEON}prama-agent swarm <zona>${C_OFF}: coordinador + agentes."
-  box_row "$C_BORDER_HI" "  Se hablan por el bus: ${C_NEON}bus assign${C_OFF} / ${C_NEON}bus report${C_OFF}."
+  box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}$(_t 'Agents working together')${C_OFF}"
+  box_row "$C_BORDER_HI" "  $(_t '%s in the menu or %sprama-agent swarm <zone>%s: coordinator + agents.' "${KEY_BADGE} s ${C_OFF}" "$C_NEON" "$C_OFF")"
+  box_row "$C_BORDER_HI" "  $(_t 'They talk over the bus: %sbus assign%s / %sbus report%s.' "$C_NEON" "$C_OFF" "$C_NEON" "$C_OFF")"
   box_sep "$C_BORDER_HI"
-  box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}Desde el celular${C_OFF}"
-  box_row "$C_BORDER_HI" "  Terminal: usa mosh; el cockpit muestra un agente por pantalla (◀ ▶)."
-  box_row "$C_BORDER_HI" "  Sin terminal: ${C_NEON}prama-agent telegram setup${C_OFF} (equipos, cuota, reportes)."
+  box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}$(_t 'From your phone')${C_OFF}"
+  box_row "$C_BORDER_HI" "  $(_t 'Terminal: use mosh; the cockpit shows one agent per screen (◀ ▶).')"
+  box_row "$C_BORDER_HI" "  $(_t 'No terminal: %sprama-agent telegram setup%s (teams, quota, reports).' "$C_NEON" "$C_OFF")"
   box_sep "$C_BORDER_HI"
-  box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}Permisos${C_OFF}"
+  box_row "$C_BORDER_HI" "${C_LIVE}${C_BOLD}$(_t 'Permissions')${C_OFF}"
   box_row "$C_BORDER_HI" "  $(perm_badge ask)  ·  $(perm_badge plan)  ·  $(perm_badge yolo)"
-  box_row "$C_BORDER_HI" "  YOLO solo en servidores aislados: el agente ejecuta sin preguntar."
+  box_row "$C_BORDER_HI" "  $(_t 'YOLO only on isolated servers: the agent runs commands without asking.')"
   box_bottom "Apache-2.0" "$C_BORDER_HI"
   printf '\n'
 }
@@ -218,14 +293,17 @@ subcmd_status() {
   refresh_dimensions
   state_gc
   printf '\n'
-  box_top "✦ $PRAMA_BRAND · FLOTA" "$(host_stats_label)" "$C_BORDER_HI"
-  local panes count=0
+  box_top "✦ $PRAMA_BRAND · $(_t 'FLEET')" "$(host_stats_label)" "$C_BORDER_HI"
+  local panes count=0 h_s h_r h_st h_z
   panes=$(list_panes_raw)
   if [ -z "$panes" ]; then
-    box_row "$C_BORDER_HI" "${C_MUTED}No hay agentes en ejecución.${C_OFF}"
-    box_row "$C_BORDER_HI" "Lanza uno con ${C_NEON}prama-agent${C_OFF} (interfaz) o ${C_NEON}prama-agent claude <zona>${C_OFF}."
+    box_row "$C_BORDER_HI" "${C_MUTED}$(_t 'No agents running.')${C_OFF}"
+    box_row "$C_BORDER_HI" "$(_t 'Launch one with %sprama-agent%s (interface) or %sprama-agent claude <zone>%s.' "$C_NEON" "$C_OFF" "$C_NEON" "$C_OFF")"
   else
-    box_row "$C_BORDER_HI" "$(printf '%s%-28s %-15s %-11s %-6s %-7s %s%s' "$C_MUTED" SESION ROL ESTADO CPU RAM "ZONA / RAMA" "$C_OFF")"
+    _tv h_s 'SESSION'; _tv h_r 'ROLE'; _tv h_st 'STATE'; _tv h_z 'ZONE / BRANCH'
+    # Column widths in display columns (translations may carry accents).
+    ui_fit "$h_s" 28; h_s=$UI_S; ui_fit "$h_r" 15; h_r=$UI_S; ui_fit "$h_st" 11; h_st=$UI_S
+    box_row "$C_BORDER_HI" "$(printf '%s%s %s %s %-6s %-7s %s%s' "$C_MUTED" "$h_s" "$h_r" "$h_st" CPU RAM "$h_z" "$C_OFF")"
     box_sep "$C_BORDER_HI"
     local s ppid pcmd ppath dead _att a_pid cpu mem _et comm st branch
     while IFS='|' read -r s ppid pcmd ppath dead _att; do
@@ -241,18 +319,18 @@ subcmd_status() {
         "$(basename "$ppath")${branch:+ ⎇ $branch}")"
     done <<< "$panes"
   fi
-  box_bottom "$count sesiones · attach <s> · logs <s> · stop <s>" "$C_BORDER_HI"
+  box_bottom "$(_t '%d sessions · attach <s> · logs <s> · stop <s>' "$count")" "$C_BORDER_HI"
 
   local unmanaged
   unmanaged=$(find_unmanaged_agents)
   if [ -n "$unmanaged" ]; then
     printf '\n'
-    box_top "▲ AGENTES FUERA DE PRAMA (se pierden si se corta SSH)" "" "$C_BRASS"
+    box_top "$(_t '▲ AGENTS OUTSIDE PRAMA (lost if SSH drops)')" "" "$C_BRASS"
     local u_pid u_tty u_comm u_cpu u_mem u_et u_cwd
     while IFS='|' read -r u_pid u_tty u_comm u_cpu u_mem u_et u_cwd; do
       box_row "$C_BRASS" "$(printf '%-8s %-8s %-7s %-6s %-7s %s' "$u_pid" "$u_comm" "$u_tty" "$u_cpu" "$u_mem" "$u_cwd")"
     done <<< "$unmanaged"
-    box_bottom "Lánzalos con prama-agent para que sobrevivan" "$C_BRASS"
+    box_bottom "$(_t 'Launch them with prama-agent so they survive')" "$C_BRASS"
   fi
   printf '\n'
 }
@@ -291,7 +369,7 @@ subcmd_agents() {
     printf ']\n'
   else
     for i in "${!AGENTS[@]}"; do
-      printf '%-8s %s\n' "${AGENTS[$i]}" "$(command -v "${AGENTS[$i]}" 2>/dev/null || echo '(no instalado)')"
+      printf '%-8s %s\n' "${AGENTS[$i]}" "$(command -v "${AGENTS[$i]}" 2>/dev/null || _t '(not installed)')"
     done
   fi
 }
@@ -302,13 +380,13 @@ subcmd_attach() {
   if [ -z "$target" ]; then
     mapfile -t _ss < <(prama_sessions)
     case ${#_ss[@]} in
-      0) die "No hay sesiones activas. Abre la interfaz con 'prama-agent' para lanzar una." ;;
+      0) die "$(_t "No active sessions. Open the interface with 'prama-agent' to launch one.")" ;;
       1) target=${_ss[0]} ;;
       *)
         if command -v fzf >/dev/null 2>&1 && (( IS_TTY )); then
-          target=$(printf '%s\n' "${_ss[@]}" | fzf --height=40% --border=rounded --prompt='sesión › ') || exit 0
+          target=$(printf '%s\n' "${_ss[@]}" | fzf --height=40% --border=rounded --prompt="$(_t 'session › ')") || exit 0
         else
-          PS3="Sesión: "
+          PS3=$(_t 'Session: ')
           select target in "${_ss[@]}"; do [ -n "$target" ] && break; done
         fi ;;
     esac
@@ -320,19 +398,19 @@ subcmd_attach() {
 subcmd_stop() {
   local target=${1:-} yes=0
   [ "${2:-}" = "-y" ] || [ "${2:-}" = "--yes" ] && yes=1
-  [ -n "$target" ] || die "Uso: prama-agent stop <sesión> | stop --all [-y]"
+  [ -n "$target" ] || die "$(_t 'Usage: prama-agent stop <session> | stop --all [-y]')"
   if [ "$target" = "--all" ]; then
     mapfile -t _ss < <(prama_sessions)
-    (( ${#_ss[@]} )) || { info_msg "No hay sesiones de agentes activas."; return 0; }
+    (( ${#_ss[@]} )) || { info_msg "$(_t 'No active agent sessions.')"; return 0; }
     if (( ! yes )); then
-      (( IS_TTY )) || die "Sin terminal interactiva: usa 'stop --all -y' para confirmar."
-      printf ' Se cerrarán %d sesiones: %s\n ¿Continuar? [s/N] ' "${#_ss[@]}" "${_ss[*]}"
+      (( IS_TTY )) || die "$(_t "No interactive terminal: use 'stop --all -y' to confirm.")"
+      _t ' %d sessions will be closed: %s\n Continue? [y/N] ' "${#_ss[@]}" "${_ss[*]}"
       local a; IFS= read -r a
-      [[ "$a" =~ ^[sSyY]$ ]] || { info_msg "Cancelado."; return 0; }
+      [[ "$a" =~ ^[sSyY]$ ]] || { info_msg "$(_t 'Cancelled.')"; return 0; }
     fi
     local s
     for s in "${_ss[@]}"; do
-      tmx_kill "$s" && state_remove "$s" && bus_event stopped operator "$s" "" && ok "Sesión '$s' cerrada."
+      tmx_kill "$s" && state_remove "$s" && bus_event stopped operator "$s" "" && ok "$(_t "Session '%s' closed." "$s")"
     done
     return 0
   fi
@@ -340,23 +418,23 @@ subcmd_stop() {
   tmx_kill "$target"
   state_remove "$target"
   bus_event stopped operator "$target" ""
-  ok "Sesión '$target' cerrada."
+  ok "$(_t "Session '%s' closed." "$target")"
 }
 
 subcmd_restart() {
   require_session "${1:-}"
-  tmx respawn-pane -k -t "=$1:" && ok "Agente relanzado en '$1' (el historial se conserva)."
+  tmx respawn-pane -k -t "=$1:" && ok "$(_t "Agent relaunched in '%s' (history is kept)." "$1")"
 }
 
 subcmd_logs() {
   local target=${1:-} lines=${2:-80}
   require_session "$target"
-  [[ "$lines" =~ ^[0-9]+$ ]] || die "N debe ser un número."
+  [[ "$lines" =~ ^[0-9]+$ ]] || die "$(_t 'N must be a number.')"
   refresh_dimensions
   if (( IS_TTY )) && command -v less >/dev/null 2>&1 && (( lines > ${ROWS:-24} )); then
     tmx_capture "$target" "$lines" 1 | less -R +G
   else
-    box_top "◉ $target" "últimas $lines líneas" "$C_BORDER_HI"
+    box_top "◉ $target" "$(_t 'last %s lines' "$lines")" "$C_BORDER_HI"
     tmx_capture "$target" "$lines" "$IS_TTY"
     box_bottom "prama-agent attach $target" "$C_BORDER_HI"
   fi
@@ -365,7 +443,7 @@ subcmd_logs() {
 subcmd_capture() {
   local lines=${2:-40}
   require_session "${1:-}"
-  [[ "$lines" =~ ^[0-9]+$ ]] || die "N debe ser un número."
+  [[ "$lines" =~ ^[0-9]+$ ]] || die "$(_t 'N must be a number.')"
   tmx_capture "$1" "$lines" 0
 }
 
@@ -373,9 +451,9 @@ subcmd_send() {
   local target=${1:-}
   shift || true
   local text="$*"
-  [ -n "$target" ] && [ -n "$text" ] || die "Uso: prama-agent send <sesión> \"<texto>\""
+  [ -n "$target" ] && [ -n "$text" ] || die "$(_t 'Usage: prama-agent send <session> "<text>"')"
   require_session "$target"
-  tmx_send "$target" "$text" && ok "Enviado a '$target'."
+  tmx_send "$target" "$text" && ok "$(_t "Sent to '%s'." "$target")"
 }
 
 subcmd_worktree() {
@@ -392,58 +470,61 @@ subcmd_worktree() {
         box_row "$C_BORDER_HI" "${C_LIVE}▸ ${C_BOLD}${ZONES[$i]}${C_OFF} ${C_MUTED}$dir${C_OFF}"
         while IFS= read -r line; do box_row "$C_BORDER_HI" "   $line"; done < <(git -C "$dir" worktree list)
       done
-      box_bottom "crear: prama-agent worktree create <zona> <rama>" "$C_BORDER_HI" ;;
+      box_bottom "$(_t 'create: prama-agent worktree create <zone> <branch>')" "$C_BORDER_HI" ;;
     create|add)
       local zone=${1:-} branch=${2:-} dir wt
-      [ -n "$zone" ] && [ -n "$branch" ] || die "Uso: prama-agent worktree create <zona> <rama>"
-      dir=$(zone_dir "$zone") || die "Zona '$zone' no encontrada."
+      [ -n "$zone" ] && [ -n "$branch" ] || die "$(_t 'Usage: prama-agent worktree create <zone> <branch>')"
+      dir=$(zone_dir "$zone") || die "$(_t "Zone '%s' not found." "$zone")"
       wt=$(provision_worktree "$dir" "$branch") || exit 1
-      ok "Worktree listo en: $wt" ;;
+      ok "$(_t 'Worktree ready at: %s' "$wt")" ;;
     remove|rm)
       local zone=${1:-} branch=${2:-} dir wt
-      [ -n "$zone" ] && [ -n "$branch" ] || die "Uso: prama-agent worktree remove <zona> <rama>"
-      dir=$(zone_dir "$zone") || die "Zona '$zone' no encontrada."
+      [ -n "$zone" ] && [ -n "$branch" ] || die "$(_t 'Usage: prama-agent worktree remove <zone> <branch>')"
+      dir=$(zone_dir "$zone") || die "$(_t "Zone '%s' not found." "$zone")"
       wt=$(worktree_path "$dir" "$branch")
-      [ -d "$wt" ] || die "No existe el worktree $wt"
+      [ -d "$wt" ] || die "$(_t 'Worktree %s does not exist' "$wt")"
       git -C "$dir" worktree remove "$wt" \
-        || die "Git rechazó borrar $wt (¿cambios sin guardar?). Revisa y usa: git -C $dir worktree remove --force $wt"
-      ok "Worktree eliminado: $wt (la rama '$branch' se conserva)" ;;
+        || die "$(_t 'Git refused to remove %s (unsaved changes?). Check and use: git -C %s worktree remove --force %s' "$wt" "$dir" "$wt")"
+      ok "$(_t "Worktree removed: %s (branch '%s' is kept)" "$wt" "$branch")" ;;
     prune)
       local i
       for i in "${!ZONES[@]}"; do
         git -C "${ZONE_DIRS[$i]}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || continue
-        git -C "${ZONE_DIRS[$i]}" worktree prune -v && ok "Podado: ${ZONES[$i]}"
+        git -C "${ZONE_DIRS[$i]}" worktree prune -v && ok "$(_t 'Pruned: %s' "${ZONES[$i]}")"
       done ;;
-    *) die "Acción desconocida: '$action' (list | create | remove | prune)" ;;
+    *) die "$(_t "Unknown action: '%s' (list | create | remove | prune)" "$action")" ;;
   esac
 }
 
 subcmd_profiles() {
   refresh_dimensions
-  box_top "⚙ PERFILES LLM" "--profile" "$C_BORDER_HI"
-  box_row "$C_BORDER_HI" "$(printf '%s%-16s %-14s %-38s %s%s' "$C_MUTED" PERFIL ESTADO ENDPOINT MODELO "$C_OFF")"
+  box_top "⚙ $(_t 'LLM PROFILES')" "--profile" "$C_BORDER_HI"
+  local h_p h_st h_m
+  _tv h_p 'PROFILE'; _tv h_st 'STATUS'; _tv h_m 'MODEL'
+  box_row "$C_BORDER_HI" "$(printf '%s%-16s %-14s %-38s %s%s' "$C_MUTED" "$h_p" "$h_st" ENDPOINT "$h_m" "$C_OFF")"
   box_sep "$C_BORDER_HI"
   _prof_row() {
-    local name=$1 key=$2 url=$3 model=$4 st
-    if [ "$key" = native ]; then st="${C_LIVE}● nativo${C_OFF}      "
-    elif [ "$key" = local ]; then st="${C_NEON}● proxy local${C_OFF} "
-    elif [ -n "$key" ]; then st="${C_LIVE}● con key${C_OFF}     "
-    else st="${C_BRASS}○ falta key${C_OFF}   "; fi
+    local name=$1 key=$2 url=$3 model=$4 st lbl
+    if [ "$key" = native ]; then _tv lbl '● native'; st=$C_LIVE
+    elif [ "$key" = local ]; then _tv lbl '● local proxy'; st=$C_NEON
+    elif [ -n "$key" ]; then _tv lbl '● with key'; st=$C_LIVE
+    else _tv lbl '○ missing key'; st=$C_BRASS; fi
+    st+="$lbl${C_OFF}$(repeat_char ' ' $(( 14 - ${#lbl} )))"
     box_row "$C_BORDER_HI" "$(printf '%s%-16s%s %s %-38s %s' "$C_BOLD" "$name" "$C_OFF" "$st" "$(truncate_cols "$url" 38)" "$model")"
   }
-  _prof_row default native "suscripción del CLI" "—"
+  _prof_row default native "$(_t 'CLI subscription')" "—"
   _prof_row deepseek "${DEEPSEEK_API_KEY:-}" "${DEEPSEEK_BASE_URL:-https://api.deepseek.com/anthropic}" "${DEEPSEEK_MODEL:-deepseek-chat}"
   _prof_row glm "${GLM_API_KEY:-}" "${GLM_BASE_URL:-https://open.bigmodel.cn/api/anthropic}" "${GLM_MODEL:-glm-4.6}"
   _prof_row openrouter "${OPENROUTER_API_KEY:-}" "${OPENROUTER_ANTHROPIC_URL:-https://openrouter.ai/api}" "${OPENROUTER_MODEL:-(--model)}"
   _prof_row local local "${LOCAL_ROUTER_URL:-http://127.0.0.1:3456}" "${LOCAL_ROUTER_MODEL:-default}"
   box_sep "$C_BORDER_HI"
-  is_in opencode "${AGENTS[@]}" && box_row "$C_BORDER_HI" "${C_MUTED}opencode usa OpenRouter directo: OPENROUTER_API_KEY $( [ -n "${OPENROUTER_API_KEY:-}" ] && printf '%s● configurada%s' "$C_LIVE" "$C_MUTED" || printf '%s○ falta%s' "$C_BRASS" "$C_MUTED") · modelo por defecto $PRAMA_OPENCODE_MODEL${C_OFF}"
-  box_bottom "keys en $PRAMA_CONFIG_HOME/providers.env (chmod 600)" "$C_BORDER_HI"
+  is_in opencode "${AGENTS[@]}" && box_row "$C_BORDER_HI" "${C_MUTED}$(_t 'opencode uses OpenRouter directly: OPENROUTER_API_KEY %s · default model %s' "$( [ -n "${OPENROUTER_API_KEY:-}" ] && printf '%s%s%s' "$C_LIVE" "$(_t '● configured')" "$C_MUTED" || printf '%s%s%s' "$C_BRASS" "$(_t '○ missing')" "$C_MUTED")" "$PRAMA_OPENCODE_MODEL")${C_OFF}"
+  box_bottom "$(_t 'keys in %s/providers.env (chmod 600)' "$PRAMA_CONFIG_HOME")" "$C_BORDER_HI"
 }
 
 subcmd_mcp() {
   refresh_dimensions
-  box_top "☍ SERVIDORES MCP" "" "$C_BORDER_HI"
+  box_top "☍ $(_t 'MCP SERVERS')" "" "$C_BORDER_HI"
   local line i dir
   if agent_installed agy; then
     box_row "$C_BORDER_HI" "${C_LIVE}▸ agy${C_OFF}"
@@ -473,14 +554,14 @@ subcmd_doctor() {
   box_top "⚙ DOCTOR" "v$VERSION" "$C_BORDER_HI"
 
   ensure_tmux_conf 1
-  box_row "$C_BORDER_HI" "$good Config tmux de prama regenerada ${C_MUTED}($PRAMA_TMUX_CONF)${C_OFF}"
+  box_row "$C_BORDER_HI" "$good $(_t 'prama tmux config regenerated') ${C_MUTED}($PRAMA_TMUX_CONF)${C_OFF}"
 
   local tv
   tv=$(tmux -V 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
   if awk -v v="${tv:-0}" 'BEGIN{exit !(v >= 3.2)}'; then
     box_row "$C_BORDER_HI" "$good tmux $tv"
   else
-    box_row "$C_BORDER_HI" "$meh tmux ${tv:-?}: se recomienda >= 3.2"
+    box_row "$C_BORDER_HI" "$meh $(_t 'tmux %s: >= 3.2 recommended' "${tv:-?}")"
   fi
 
   local dep
@@ -489,9 +570,9 @@ subcmd_doctor() {
       box_row "$C_BORDER_HI" "$good $dep"
     else
       case "$dep" in
-        git) box_row "$C_BORDER_HI" "$bad git no encontrado (necesario para zonas y worktrees)" ;;
-        python3|curl) box_row "$C_BORDER_HI" "$meh $dep no encontrado (solo necesario para Telegram)" ;;
-        *) box_row "$C_BORDER_HI" "$meh $dep no encontrado (opcional)" ;;
+        git) box_row "$C_BORDER_HI" "$bad $(_t 'git not found (needed for zones and worktrees)')" ;;
+        python3|curl) box_row "$C_BORDER_HI" "$meh $(_t '%s not found (only needed for Telegram)' "$dep")" ;;
+        *) box_row "$C_BORDER_HI" "$meh $(_t '%s not found (optional)' "$dep")" ;;
       esac
     fi
   done
@@ -499,42 +580,42 @@ subcmd_doctor() {
   local a
   for a in "${AGENTS[@]}"; do
     if agent_installed "$a"; then
-      box_row "$C_BORDER_HI" "$good agente $a ${C_MUTED}$(command -v "$a")${C_OFF}"
+      box_row "$C_BORDER_HI" "$good $(_t 'agent %s' "$a") ${C_MUTED}$(command -v "$a")${C_OFF}"
     else
       case "$a" in
-        opencode) box_row "$C_BORDER_HI" "${C_MUTED}○ agente opencode no instalado (npm i -g @opencode/cli)${C_OFF}" ;;
-        *)        box_row "$C_BORDER_HI" "${C_MUTED}○ agente $a no instalado${C_OFF}" ;;
+        opencode) box_row "$C_BORDER_HI" "${C_MUTED}$(_t '○ agent opencode not installed (npm i -g @opencode/cli)')${C_OFF}" ;;
+        *)        box_row "$C_BORDER_HI" "${C_MUTED}$(_t '○ agent %s not installed' "$a")${C_OFF}" ;;
       esac
     fi
   done
   if (( ${#DROPPED_AGENTS[@]} )); then
-    box_row "$C_BORDER_HI" "$meh AGENTS en config.env incluye agentes no habilitados (${DROPPED_AGENTS[*]}): se ignoran"
-    is_in opencode "${DROPPED_AGENTS[@]}" && box_row "$C_BORDER_HI" "${C_MUTED}  opencode es experimental: PRAMA_EXPERIMENTAL=1 para habilitarlo${C_OFF}"
+    box_row "$C_BORDER_HI" "$meh $(_t 'AGENTS in config.env includes agents that are not enabled (%s): ignored' "${DROPPED_AGENTS[*]}")"
+    is_in opencode "${DROPPED_AGENTS[@]}" && box_row "$C_BORDER_HI" "${C_MUTED}  $(_t 'opencode is experimental: PRAMA_EXPERIMENTAL=1 enables it')${C_OFF}"
   fi
   if is_in opencode "${AGENTS[@]}" && [ -z "${OPENROUTER_API_KEY:-}" ]; then
-    box_row "$C_BORDER_HI" "$meh opencode sin OPENROUTER_API_KEY en providers.env (o usa 'opencode auth login')"
+    box_row "$C_BORDER_HI" "$meh $(_t "opencode without OPENROUTER_API_KEY in providers.env (or use 'opencode auth login')")"
   fi
-  if command -v mosh-server >/dev/null 2>&1; then box_row "$C_BORDER_HI" "$good mosh ${C_MUTED}(conexión estable desde el celular: mosh <servidor> -- prama-agent)${C_OFF}"
-  else box_row "$C_BORDER_HI" "${C_MUTED}○ mosh no instalado (opcional, recomendado para el celular: sudo apt install mosh)${C_OFF}"; fi
-  if watchdog_running; then box_row "$C_BORDER_HI" "$good watchdog de la flota activo"
-  else box_row "$C_BORDER_HI" "${C_MUTED}○ watchdog detenido (arranca con el primer agente)${C_OFF}"; fi
+  if command -v mosh-server >/dev/null 2>&1; then box_row "$C_BORDER_HI" "$good mosh ${C_MUTED}$(_t '(stable connection from your phone: mosh <server> -- prama-agent)')${C_OFF}"
+  else box_row "$C_BORDER_HI" "${C_MUTED}$(_t '○ mosh not installed (optional, recommended for phones: sudo apt install mosh)')${C_OFF}"; fi
+  if watchdog_running; then box_row "$C_BORDER_HI" "$good $(_t 'fleet watchdog running')"
+  else box_row "$C_BORDER_HI" "${C_MUTED}$(_t '○ watchdog stopped (starts with the first agent)')${C_OFF}"; fi
   if agent_installed agy && (( ${PRAMA_HOOKS:-1} )); then
-    if agy_hooks_installed; then box_row "$C_BORDER_HI" "$good hooks de agy instalados (~/.gemini/config/hooks.json)"
-    else box_row "$C_BORDER_HI" "${C_MUTED}○ hooks de agy: se instalan al lanzar agy (prama-agent fleet hooks)${C_OFF}"; fi
+    if agy_hooks_installed; then box_row "$C_BORDER_HI" "$good $(_t 'agy hooks installed (~/.gemini/config/hooks.json)')"
+    else box_row "$C_BORDER_HI" "${C_MUTED}$(_t '○ agy hooks: installed when agy is launched (prama-agent fleet hooks)')${C_OFF}"; fi
   fi
-  command -v jq >/dev/null 2>&1 || box_row "$C_BORDER_HI" "$meh jq no instalado: sin telemetría de cuota ni hooks de agy (sudo apt install jq)"
+  command -v jq >/dev/null 2>&1 || box_row "$C_BORDER_HI" "$meh $(_t 'jq not installed: no quota telemetry or agy hooks (sudo apt install jq)')"
 
-  box_row "$C_BORDER_HI" "$good Estado privado (0700) ${C_MUTED}$PRAMA_STATE_HOME${C_OFF}"
+  box_row "$C_BORDER_HI" "$good $(_t 'Private state (0700)') ${C_MUTED}$PRAMA_STATE_HOME${C_OFF}"
   local fb; fb=$(feedback_open_count)
-  if (( fb )); then box_row "$C_BORDER_HI" "$meh $fb reporte(s) de fallos de prama sin revisar: prama-agent feedback list"
-  else box_row "$C_BORDER_HI" "$good Sin reportes de fallos pendientes"; fi
+  if (( fb )); then box_row "$C_BORDER_HI" "$meh $(_t '%s unreviewed prama bug report(s): prama-agent feedback list' "$fb")"
+  else box_row "$C_BORDER_HI" "$good $(_t 'No pending bug reports')"; fi
   state_gc
 
   if (( PRAMA_SKIP_PERMISSIONS )); then
     if (( EUID == 0 )); then
-      box_row "$C_BORDER_HI" "$meh YOLO por defecto ejecutando como root: usa un usuario sin privilegios o PRAMA_SKIP_PERMISSIONS=0"
+      box_row "$C_BORDER_HI" "$meh $(_t 'YOLO by default while running as root: use an unprivileged user or PRAMA_SKIP_PERMISSIONS=0')"
     else
-      box_row "$C_BORDER_HI" "$meh YOLO por defecto activado (PRAMA_SKIP_PERMISSIONS=1)"
+      box_row "$C_BORDER_HI" "$meh $(_t 'YOLO enabled by default (PRAMA_SKIP_PERMISSIONS=1)')"
     fi
   fi
 
@@ -547,53 +628,53 @@ subcmd_doctor() {
       tmx detach-client -t "$c_tty" 2>/dev/null && (( detached++ ))
     fi
   done < <(tmx list-clients -F '#{client_name}|#{client_session}|#{client_activity}' 2>/dev/null)
-  box_row "$C_BORDER_HI" "$good Clientes inactivos desconectados: $detached"
+  box_row "$C_BORDER_HI" "$good $(_t 'Idle clients detached: %s' "$detached")"
 
   local i
   for i in "${!ZONES[@]}"; do
     git -C "${ZONE_DIRS[$i]}" worktree prune 2>/dev/null || true
   done
-  box_row "$C_BORDER_HI" "$good Metadatos de worktrees saneados"
+  box_row "$C_BORDER_HI" "$good $(_t 'Worktree metadata cleaned up')"
 
   # ── Migration from v5 ──
   if [ -d /tmp/prama-bus ] && [ "$(stat -c %u /tmp/prama-bus 2>/dev/null)" = "$EUID" ]; then
-    rm -rf /tmp/prama-bus && box_row "$C_BORDER_HI" "$good Eliminado el bus inseguro de v5 (/tmp/prama-bus)"
+    rm -rf /tmp/prama-bus && box_row "$C_BORDER_HI" "$good $(_t 'Removed the insecure v5 bus (%s)' /tmp/prama-bus)"
   elif [ -d /tmp/prama-bus ]; then
-    box_row "$C_BORDER_HI" "$meh /tmp/prama-bus existe y pertenece a otro usuario: revísalo (posible ataque)"
+    box_row "$C_BORDER_HI" "$meh $(_t '%s exists and belongs to another user: check it (possible attack)' /tmp/prama-bus)"
   fi
   if grep -q 'prama-agent-managed' "$HOME/.tmux.conf" 2>/dev/null; then
     if (( restore )); then
       mv -f "$HOME/.tmux.conf" "$HOME/.tmux.conf.prama-v5"
       if [ -f "$HOME/.tmux.conf.bak" ] && ! grep -q 'prama-agent-managed' "$HOME/.tmux.conf.bak"; then
         cp -p "$HOME/.tmux.conf.bak" "$HOME/.tmux.conf"
-        box_row "$C_BORDER_HI" "$good ~/.tmux.conf original restaurado desde .bak"
+        box_row "$C_BORDER_HI" "$good $(_t 'Original ~/.tmux.conf restored from .bak')"
       else
-        box_row "$C_BORDER_HI" "$good ~/.tmux.conf de v5 retirado (guardado en ~/.tmux.conf.prama-v5)"
+        box_row "$C_BORDER_HI" "$good $(_t 'v5 ~/.tmux.conf retired (saved as ~/.tmux.conf.prama-v5)')"
       fi
     else
-      box_row "$C_BORDER_HI" "$meh ~/.tmux.conf fue sobrescrito por prama v5. Ejecuta: prama-agent doctor --restore-tmux-conf"
+      box_row "$C_BORDER_HI" "$meh $(_t 'Your ~/.tmux.conf was overwritten by prama v5. Run: prama-agent doctor --restore-tmux-conf')"
     fi
   fi
   if tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -q "^${PRAMA_SESSION_PREFIX}-"; then
-    box_row "$C_BORDER_HI" "$meh Hay sesiones '${PRAMA_SESSION_PREFIX}-*' de v5 en tu tmux personal; v6 usa su propio servidor (tmux -L $PRAMA_TMUX_SOCKET)."
+    box_row "$C_BORDER_HI" "$meh $(_t "There are v5 '%s-*' sessions in your personal tmux; v6 uses its own server (tmux -L %s)." "$PRAMA_SESSION_PREFIX" "$PRAMA_TMUX_SOCKET")"
   fi
 
   local unmanaged
   unmanaged=$(find_unmanaged_agents)
   if [ -n "$unmanaged" ]; then
-    box_row "$C_BORDER_HI" "$meh $(wc -l <<< "$unmanaged") agente(s) corriendo fuera de prama (ver 'prama-agent status')"
+    box_row "$C_BORDER_HI" "$meh $(_t "%s agent(s) running outside prama (see 'prama-agent status')" "$(wc -l <<< "$unmanaged")")"
   fi
-  box_bottom "listo" "$C_BORDER_HI"
+  box_bottom "$(_t 'checks done')" "$C_BORDER_HI"
   printf '\n'
 }
 
 subcmd_completion() {
-  [ "${1:-bash}" = "bash" ] || die "Solo bash está soportado por ahora."
+  [ "${1:-bash}" = "bash" ] || die "$(_t 'Only bash is supported for now.')"
   cat <<'EOF'
 # prama-agent bash completion — add to ~/.bashrc:  eval "$(prama-agent completion bash)"
 _prama_agent() {
   local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]} first=${COMP_WORDS[1]:-}
-  local subs="status ls sessions attach logs capture send restart stop fleet swarm teams bus cockpit fzf worktree profiles mcp zones agents telegram feedback setup login doctor update completion info help"
+  local subs="status ls sessions attach logs capture send restart stop fleet swarm teams bus cockpit fzf worktree profiles mcp zones agents telegram feedback memory setup login lang theme doctor update completion info help"
   case "$prev" in
     --role|-O) COMPREPLY=($(compgen -W "executor coordinator reader daemon" -- "$cur")); return ;;
     --profile|-P) COMPREPLY=($(compgen -W "default openrouter deepseek glm local" -- "$cur")); return ;;
@@ -609,16 +690,21 @@ _prama_agent() {
       elif [ "$COMP_CWORD" -eq 3 ]; then
         case "${COMP_WORDS[2]}" in
           model|edit|restart|kill) COMPREPLY=($(compgen -W "$(prama-agent sessions 2>/dev/null)" -- "$cur")) ;;
-          spawn) COMPREPLY=($(compgen -W "${AGENTS[*]}" -- "$cur")) ;;
+          spawn) COMPREPLY=($(compgen -W "$(prama-agent agents 2>/dev/null | awk '{print $1}')" -- "$cur")) ;;
         esac
       fi; return ;;
     swarm) COMPREPLY=($(compgen -W "list stop help --team --all --workers --coord --task --model --worker-model --no-open $(prama-agent zones 2>/dev/null | awk '{print $1}')" -- "$cur")); return ;;
     cockpit) COMPREPLY=($(compgen -W "$(prama-agent zones 2>/dev/null | awk '{print $1}') $(prama-agent sessions 2>/dev/null)" -- "$cur")); return ;;
-    telegram) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "setup start stop restart status logs test notify" -- "$cur")); return ;;
+    telegram) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "setup start stop restart status logs test notify alerts mute" -- "$cur")); return ;;
     worktree) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "list create remove prune" -- "$cur")); return ;;
     feedback|bug) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "list show export close help" -- "$cur")); return ;;
+    memory|memoria) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "list show add clear path help" -- "$cur")); return ;;
     zones) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "list add remove scan help" -- "$cur")); return ;;
-    login) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "${AGENTS[*]}" -- "$cur")); return ;;
+    login) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "$(prama-agent agents 2>/dev/null | awk '{print $1}')" -- "$cur")); return ;;
+    lang|language|idioma) [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "en es auto" -- "$cur")); return ;;
+    theme|tema|color)
+      # "prama-agent theme --names" prints the theme names, one per line.
+      [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "$(prama-agent theme --names 2>/dev/null)" -- "$cur")); return ;;
   esac
   if [ "$COMP_CWORD" -eq 1 ]; then
     COMPREPLY=($(compgen -W "$subs $(prama-agent agents 2>/dev/null | awk '{print $1}')" -- "$cur"))
@@ -656,6 +742,8 @@ if [ $# -gt 0 ]; then
     zones)                 shift; subcmd_zones "$@"; exit $? ;;
     setup|init)            shift; subcmd_setup "$@"; exit $? ;;
     login|auth)            shift; subcmd_login "$@"; exit $? ;;
+    lang|language|idioma)  shift; subcmd_lang "$@"; exit $? ;;
+    theme|tema|color)      shift; subcmd_theme "$@"; exit $? ;;
     agents)                shift; subcmd_agents "$@"; exit 0 ;;
     cockpit|ui|team)       shift; subcmd_cockpit "$@"; exit $? ;;
     swarm|equipo)          shift; subcmd_swarm "$@"; exit $? ;;
@@ -665,6 +753,7 @@ if [ $# -gt 0 ]; then
     fleet)                 shift; subcmd_fleet "$@"; exit $? ;;
     telegram|tg|bot)       shift; subcmd_telegram "$@"; exit $? ;;
     feedback|bug)          shift; subcmd_feedback "$@"; exit $? ;;
+    memory|memoria|mem)    shift; subcmd_memory "$@"; exit $? ;;
     attach|a)              shift; subcmd_attach "${1:-}"; exit $? ;;
     stop|kill|k)           shift; subcmd_stop "$@"; exit $? ;;
     restart|r)             shift; subcmd_restart "${1:-}"; exit $? ;;
@@ -708,45 +797,45 @@ while [ $# -gt 0 ]; do
     --yolo)             PERM_MODE="yolo"; PERM_EXPLICIT=1; shift ;;
     --plan|--readonly)  PERM_MODE="plan"; PERM_EXPLICIT=1; shift ;;
     --perm)
-      need_arg $# "--perm requiere: ${AVAILABLE_PERM_MODES[*]}"
-      is_in "$2" "${AVAILABLE_PERM_MODES[@]}" || die "--perm debe ser: ${AVAILABLE_PERM_MODES[*]}"
+      need_arg $# "$(_t '--perm requires: %s' "${AVAILABLE_PERM_MODES[*]}")"
+      is_in "$2" "${AVAILABLE_PERM_MODES[@]}" || die "$(_t '--perm must be: %s' "${AVAILABLE_PERM_MODES[*]}")"
       PERM_MODE=$2; PERM_EXPLICIT=1; shift 2 ;;
     --role|-O)
-      need_arg $# "--role requiere: ${AVAILABLE_ROLES[*]}"
-      is_in "$2" "${AVAILABLE_ROLES[@]}" || die "--role debe ser: ${AVAILABLE_ROLES[*]}"
+      need_arg $# "$(_t '--role requires: %s' "${AVAILABLE_ROLES[*]}")"
+      is_in "$2" "${AVAILABLE_ROLES[@]}" || die "$(_t '--role must be: %s' "${AVAILABLE_ROLES[*]}")"
       ROLE=$2; ROLE_EXPLICIT=1; shift 2 ;;
     --model|-m)
-      need_arg $# "--model requiere un modelo"
-      valid_model "$2" || die "Modelo inválido: '$2'"
+      need_arg $# "$(_t '--model requires a model')"
+      valid_model "$2" || die "$(_t "Invalid model: '%s'" "$2")"
       AGENT_MODEL=$2; shift 2 ;;
     --effort)
-      need_arg $# "--effort requiere: low medium high xhigh max"
-      [[ "$2" =~ ^(low|medium|high|xhigh|max)$ ]] || die "--effort debe ser: low medium high xhigh max"
+      need_arg $# "$(_t '--effort requires: low medium high xhigh max')"
+      [[ "$2" =~ ^(low|medium|high|xhigh|max)$ ]] || die "$(_t '--effort must be: low medium high xhigh max')"
       AGENT_EFFORT=$2; shift 2 ;;
     --preset)
-      need_arg $# "--preset requiere un nombre (prama-agent fleet presets)"
-      preset_find "$2" >/dev/null || die "Preset desconocido '$2'. Disponibles: $(preset_names | tr '\n' ' ')"
+      need_arg $# "$(_t '--preset requires a name (prama-agent fleet presets)')"
+      preset_find "$2" >/dev/null || die "$(_t "Unknown preset '%s'. Available: %s" "$2" "$(preset_names | tr '\n' ' ')")"
       PRESET=$2; shift 2 ;;
     --loop)
-      need_arg $# "--loop requiere segundos"
-      [[ "$2" =~ ^[0-9]+$ ]] && (( $2 >= 5 )) || die "--loop requiere un número de segundos >= 5"
+      need_arg $# "$(_t '--loop requires seconds')"
+      [[ "$2" =~ ^[0-9]+$ ]] && (( $2 >= 5 )) || die "$(_t '--loop requires a number of seconds >= 5')"
       DAEMON_INTERVAL=$2; ROLE="daemon"; shift 2 ;;
     --task)
-      need_arg $# "--task requiere una instrucción"
+      need_arg $# "$(_t '--task requires an instruction')"
       DAEMON_TASK=$2; shift 2 ;;
     --name|-n)
-      need_arg $# "--name requiere un nombre de sesión"
-      valid_session_name "$2" || die "Nombre inválido '$2': usa letras, números, - y _ (máx. 48)."
+      need_arg $# "$(_t '--name requires a session name')"
+      valid_session_name "$2" || die "$(_t "Invalid name '%s': use letters, digits, - and _ (max. 48)." "$2")"
       CUSTOM_NAME=$2; shift 2 ;;
     --worktree|-w)
-      need_arg $# "--worktree requiere un nombre de rama"
+      need_arg $# "$(_t '--worktree requires a branch name')"
       WORKTREE=$2; shift 2 ;;
     --profile|-P)
-      need_arg $# "--profile requiere un perfil"
-      is_in "$2" "${AVAILABLE_PROFILES[@]}" || die "Perfil desconocido '$2'. Opciones: ${AVAILABLE_PROFILES[*]}"
+      need_arg $# "$(_t '--profile requires a profile')"
+      is_in "$2" "${AVAILABLE_PROFILES[@]}" || die "$(_t "Unknown profile '%s'. Options: %s" "$2" "${AVAILABLE_PROFILES[*]}")"
       PROFILE=$2; PROFILE_EXPLICIT=1; shift 2 ;;
     --zone|-z)
-      need_arg $# "--zone requiere una zona"
+      need_arg $# "$(_t '--zone requires a zone')"
       ZONE=$2; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     --) shift; PASS+=("$@"); break ;;
@@ -763,14 +852,14 @@ done
 preset_apply_defaults "$AGENT_EXPLICIT" "$ROLE_EXPLICIT" "$PROFILE_EXPLICIT" || exit 1
 
 if [ "$ROLE" = "reader" ]; then
-  [ "$PERM_EXPLICIT" = 1 ] && [ "$PERM_MODE" != "plan" ] && warn "El rol reader fuerza el modo plan (solo lectura)."
+  [ "$PERM_EXPLICIT" = 1 ] && [ "$PERM_MODE" != "plan" ] && warn "$(_t 'The reader role forces plan mode (read-only).')"
   PERM_MODE="plan"
 fi
 
 # ── Interactive TUI ─────────────────────────────────────────────────────────
 if [ -z "$AGENT" ] || [ -z "$ZONE" ]; then
   if (( ! ${IS_TERM:-$IS_TTY} )) || [ ! -t 0 ]; then
-    [ -n "$AGENT" ] && die "Falta la zona. Zonas disponibles: ${ZONES[*]}"
+    [ -n "$AGENT" ] && die "$(_t 'Missing the zone. Available zones: %s' "${ZONES[*]}")"
     usage
     exit 1
   fi
@@ -781,9 +870,9 @@ fi
 
 # ── Direct CLI launch ───────────────────────────────────────────────────────
 if (( DRY || DIRECT )); then
-  DIR=$(zone_dir "$ZONE") || die "La zona '$ZONE' no está registrada."
-  [ -d "$DIR" ] || die "El directorio '$DIR' de la zona '$ZONE' no existe."
-  agent_installed "$AGENT" || die "El agente '$AGENT' no está instalado."
+  DIR=$(zone_dir "$ZONE") || die "$(_t "Zone '%s' is not registered." "$ZONE")"
+  [ -d "$DIR" ] || die "$(_t "Directory '%s' of zone '%s' does not exist." "$DIR" "$ZONE")"
+  agent_installed "$AGENT" || die "$(_t "Agent '%s' is not installed." "$AGENT")"
   SESSION_NAME=${CUSTOM_NAME:-$(session_name_for "$AGENT" "$ZONE" "$ROLE" "$WORKTREE")}
   TARGET_DIR=$DIR
   if [ -n "$WORKTREE" ]; then
@@ -801,7 +890,7 @@ if (( DRY || DIRECT )); then
   fi
   apply_provider_profile "$PROFILE"
   agent_runtime_env "$AGENT" "$SESSION_NAME" "$PERM_MODE" "$ROLE_PROMPT"
-  cd "$TARGET_DIR" || die "No se pudo entrar a $TARGET_DIR"
+  cd "$TARGET_DIR" || die "$(_t 'Could not enter %s' "$TARGET_DIR")"
   if [ "$PERM_MODE" = "yolo" ]; then export IS_SANDBOX=1; else unset IS_SANDBOX; fi
   export PRAMA_SESSION="$SESSION_NAME" PRAMA_ROLE="$ROLE"
   exec "${CMD[@]}"

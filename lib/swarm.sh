@@ -23,12 +23,12 @@ _swarm_spec_parse() {
     [ -n "$part" ] || continue
     a=${part%%:*} n=1
     [[ "$part" == *:* ]] && n=${part#*:}
-    [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 && n <= 12 )) || die "Cantidad inválida en '$part' (1-12)"
-    is_in "$a" "${AGENTS[@]}" || die "Agente no habilitado: '$a' (${AGENTS[*]})"
-    agent_installed "$a" || die "El agente '$a' no está instalado."
+    [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 && n <= 12 )) || die "$(_t "Invalid count in '%s' (1-12)" "$part")"
+    is_in "$a" "${AGENTS[@]}" || die "$(_t "Agent not enabled: '%s' (%s)" "$a" "${AGENTS[*]}")"
+    agent_installed "$a" || die "$(_t "Agent '%s' is not installed." "$a")"
     for (( i = 0; i < n; i++ )); do SW_AGENTS+=("$a"); done
   done
-  (( ${#SW_AGENTS[@]} )) || die "Indica al menos un agente ejecutor (p. ej. --workers agy:2)."
+  (( ${#SW_AGENTS[@]} )) || die "$(_t 'Give at least one executor agent (e.g. --workers agy:2).')"
 }
 
 # Exact zone name or a unique prefix ("b" → backend).
@@ -45,6 +45,33 @@ _swarm_teams_hint() {
 }
 
 _swarm_usage() {
+  case $PRAMA_UI_LANG in
+    es) _swarm_usage_es ;;
+    *)  _swarm_usage_en ;;
+  esac
+}
+
+_swarm_usage_en() {
+  cat <<EOF
+Usage: prama-agent swarm <zone> [--team <name>] [options]   coordinator + executor agents, in one step
+       --team <name>             a team of the zone (e.g. architecture, security, docs). If it exists, the
+                                 executors join it; if not, it is created with its own coordinator.
+                                 Without --team: the "$PRAMA_DEFAULT_TEAM" team (or asks to choose if the zone already has teams)
+       --coord <agent>           coordinator agent (default: claude)
+       --workers <spec>          executors, e.g. agy:3  or  agy:2,claude:1  (def. ${PRAMA_SWARM_WORKERS:-agy:2})
+       --model <m>               coordinator model
+       --worker-model <m>        executors' model
+       --task "<objective>"      initial objective for the coordinator
+       --no-open                 do not open the cockpit when done
+     prama-agent swarm list [--json]                         active teams (also: prama-agent teams)
+     prama-agent swarm stop <zone> [--team <name>|--all]     closes a team (coordinator and its agents)
+     prama-agent swarm stop <coordinator session>
+
+Navigation inside tmux: ${PRAMA_NAV_KEY:-M-a} agents · ${PRAMA_COCKPIT_KEY:-M-c} cockpit · ${PRAMA_MENU_KEY:-M-m} menu.
+EOF
+}
+
+_swarm_usage_es() {
   cat <<EOF
 Uso: prama-agent swarm <zona> [--team <nombre>] [opciones]   coordinador + agentes ejecutores, en un paso
        --team <nombre>           equipo de la zona (p. ej. arquitectura, seguridad, docs). Si existe, los
@@ -76,7 +103,7 @@ subcmd_swarm() {
 
 # Teams: one line per coordinator, or JSON.
 _swarm_list() {
-  local json=0 c sep='' zone team n m members any=0 o
+  local json=0 c sep='' zone team n m members any=0 o cnt
   [ "${1:-}" = --json ] && json=1
   (( json )) && printf '['
   while IFS='|' read -r c _ zone; do
@@ -91,12 +118,13 @@ _swarm_list() {
         "$(json_escape "$zone")" "$(json_escape "$team")" "$(json_escape "$c")" "$members" "$(json_escape "$o")"
       sep=','
     else
-      printf ' ❖ %-26s %-36s %d agente(s)%s\n' "$(team_label "$c")" "$c" "$n" "${o:+ · ${o:0:60}}"
+      _tv cnt '%d agent(s)' "$n"
+      printf ' ❖ %-26s %-36s %s%s\n' "$(team_label "$c")" "$c" "$cnt" "${o:+ · ${o:0:60}}"
     fi
     any=1
   done < <(prama_team_order)
   if (( json )); then printf ']\n'
-  elif (( ! any )); then info_msg "No hay equipos activos. Crea uno: prama-agent swarm <zona> --team <nombre>"
+  elif (( ! any )); then info_msg "$(_t 'No active teams. Create one: prama-agent swarm <zone> --team <name>')"
   fi
   return 0
 }
@@ -105,24 +133,24 @@ _swarm_start() {
   local zone='' team='' coord_a=claude spec=${PRAMA_SWARM_WORKERS:-agy:2} cmodel='' wmodel='' task='' open=1 m
   while (( $# )); do
     case "$1" in
-      --team|-T)         team=${2:?--team requiere un nombre}; shift 2
-                         valid_team_name "$team" || die "Nombre de equipo inválido: '$team' (minúsculas, números y -, máx. 20)" ;;
-      --coord|-c)        coord_a=${2:?--coord requiere un agente}; shift 2 ;;
-      --workers|-w)      spec=${2:?--workers requiere agente:cantidad}; shift 2 ;;
-      --model|-m)        cmodel=${2:?}; valid_model "$cmodel" || die "Modelo inválido: '$cmodel'"; shift 2 ;;
-      --worker-model)    wmodel=${2:?}; valid_model "$wmodel" || die "Modelo inválido: '$wmodel'"; shift 2 ;;
-      --task|-t)         task=${2:?--task requiere un texto}; shift 2 ;;
+      --team|-T)         team=${2:?$(_t '--team requires a name')}; shift 2
+                         valid_team_name "$team" || die "$(_t "Invalid team name: '%s' (lowercase letters, digits and -, max. 20)" "$team")" ;;
+      --coord|-c)        coord_a=${2:?$(_t '--coord requires an agent')}; shift 2 ;;
+      --workers|-w)      spec=${2:?$(_t '--workers requires agent:count')}; shift 2 ;;
+      --model|-m)        cmodel=${2:?}; valid_model "$cmodel" || die "$(_t "Invalid model: '%s'" "$cmodel")"; shift 2 ;;
+      --worker-model)    wmodel=${2:?}; valid_model "$wmodel" || die "$(_t "Invalid model: '%s'" "$wmodel")"; shift 2 ;;
+      --task|-t)         task=${2:?$(_t '--task requires a text')}; shift 2 ;;
       --no-open)         open=0; shift ;;
       --open)            open=1; shift ;;
-      -*)                die "Opción desconocida: $1 (prama-agent swarm help)" ;;
+      -*)                die "$(_t 'Unknown option: %s (prama-agent swarm help)' "$1")" ;;
       *)
-        [ -z "$zone" ] || die "Argumento sobrante: '$1'"
-        m=$(match_zone "$1") || die "Zona desconocida: '$1'. Zonas: ${ZONES[*]}"
+        [ -z "$zone" ] || die "$(_t "Unexpected argument: '%s'" "$1")"
+        m=$(match_zone "$1") || die "$(_t "Unknown zone: '%s'. Zones: %s" "$1" "${ZONES[*]}")"
         zone=$m; shift ;;
     esac
   done
-  [ -n "$zone" ] || { _swarm_usage >&2; die "Falta la zona."; }
-  is_in "$coord_a" "${AGENTS[@]}" && agent_installed "$coord_a" || die "Coordinador no disponible: '$coord_a'"
+  [ -n "$zone" ] || { _swarm_usage >&2; die "$(_t 'Missing the zone.')"; }
+  is_in "$coord_a" "${AGENTS[@]}" && agent_installed "$coord_a" || die "$(_t "Coordinator not available: '%s'" "$coord_a")"
   _swarm_spec_parse "$spec"
 
   local live cs='' need=${#SW_AGENTS[@]}
@@ -131,10 +159,10 @@ _swarm_start() {
     # Called by an agent (a coordinator growing its own team): same guard rails as `fleet spawn`.
     local own; own=$(state_get "$PRAMA_SESSION" ZONE)
     [ "${PRAMA_FLEET_SCOPE:-zone}" = all ] || [ -z "$own" ] || [ "$own" = "$zone" ] \
-      || die "Solo puedes formar equipos en tu zona ($own)."
+      || die "$(_t 'You can only form teams in your own zone (%s).' "$own")"
     cs=$(session_team "$PRAMA_SESSION") \
-      || die "Un agente no puede crear un coordinador; pide al operador: prama-agent swarm $zone --team <nombre>"
-    [ -z "$team" ] || [ "$team" = "$(team_name "$cs")" ] || die "Solo puedes sumar agentes a tu propio equipo ($(team_name "$cs"))."
+      || die "$(_t 'An agent cannot create a coordinator; ask the operator: prama-agent swarm %s --team <name>' "$zone")"
+    [ -z "$team" ] || [ "$team" = "$(team_name "$cs")" ] || die "$(_t 'You can only add agents to your own team (%s).' "$(team_name "$cs")")"
     team=$(team_name "$cs")
     open=0
   elif [ -n "$team" ]; then
@@ -143,13 +171,13 @@ _swarm_start() {
     # No --team: the zone's principal team when it has none yet; never join a team silently.
     local existing; existing=$(_swarm_teams_hint "$zone")
     if [ -n "$existing" ]; then
-      die "La zona '$zone' ya tiene equipo(s): $existing. Para sumarle agentes: --team <nombre>; para uno nuevo: --team <otro nombre> (p. ej. seguridad, docs)."
+      die "$(_t "Zone '%s' already has team(s): %s. To add agents to one: --team <name>; for a new one: --team <another name> (e.g. security, docs)." "$zone" "$existing")"
     fi
     team=$PRAMA_DEFAULT_TEAM
   fi
   [ -n "$cs" ] || need=$(( need + 1 ))
   (( live + need <= ${PRAMA_FLEET_MAX:-8} )) \
-    || die "El equipo necesita $need sesiones y hay $live de ${PRAMA_FLEET_MAX:-8} (PRAMA_FLEET_MAX)."
+    || die "$(_t 'The team needs %s sessions and %s of %s are in use (PRAMA_FLEET_MAX).' "$need" "$live" "${PRAMA_FLEET_MAX:-8}")"
 
   # Session names: the principal team keeps the classic names; other teams carry their name
   # (prama-backend-seguridad-coord, prama-backend-seguridad-agy, …-agy-2).
@@ -157,64 +185,70 @@ _swarm_start() {
   [ "$team" = "$PRAMA_DEFAULT_TEAM" ] || base=$(slugify "${PRAMA_SESSION_PREFIX}-$zone-$team")
   if [ -z "$cs" ]; then
     cs=$(PRAMA_TEAM=$team "$SELF_PATH" "$coord_a" "$zone" --role coordinator --bg --porcelain ${base:+--name "$base-coord"} \
-           ${cmodel:+--model "$cmodel"}) || die "No se pudo lanzar el coordinador."
+           ${cmodel:+--model "$cmodel"}) || die "$(_t 'Could not launch the coordinator.')"
     [ -n "$task" ] && state_set "$cs" OBJECTIVE="$task"
-    ok "Equipo «$team» en '$zone' · coordinador: $cs ($coord_a)"
+    ok "$(_t "Team \"%s\" in '%s' · coordinator: %s (%s)" "$team" "$zone" "$cs" "$coord_a")"
   else
-    info_msg "Equipo «$team» en '$zone' ($cs): los ejecutores se suman a él."
+    info_msg "$(_t "Team \"%s\" in '%s' (%s): the executors join it." "$team" "$zone" "$cs")"
   fi
 
   local a w members=()
   for a in "${SW_AGENTS[@]}"; do
     w=$(PRAMA_PARENT=$cs "$SELF_PATH" "$a" "$zone" --role executor --bg --porcelain --parallel \
           ${base:+--name "$base-$a"} ${wmodel:+--model "$wmodel"}) \
-      || { warn "No se pudo lanzar un ejecutor $a."; continue; }
+      || { warn "$(_t 'Could not launch a %s executor.' "$a")"; continue; }
     members+=("$w ($a)")
-    ok "Ejecutor: $w ($a)"
+    ok "$(_t 'Executor: %s (%s)' "$w" "$a")"
   done
 
   # The coordinator learns its team (and the objective) as soon as it is ready: the watchdog
   # delivers queued messages to an agent that has been READY for two ticks.
-  local brief="[PRAMA] Tu equipo «$team» en '$zone': ${members[*]:-(sin ejecutores)}. Delega con 'prama-agent bus assign <sesión> \"<tarea>\"', revisa con 'prama-agent fleet status' y suma o quita agentes con 'prama-agent fleet spawn|kill'."
-  [ -n "$task" ] && brief+=" OBJETIVO: $task"
+  local brief who="${members[*]:-}" evtext
+  [ -n "$who" ] || _tv who '(no executors)'
+  _tv brief "[PRAMA] Your team \"%s\" in '%s': %s. Delegate with 'prama-agent bus assign <session> \"<task>\"', check with 'prama-agent fleet status' and add or remove agents with 'prama-agent fleet spawn|kill'." "$team" "$zone" "$who"
+  [ -n "$task" ] && brief+=" $(_t 'OBJECTIVE: %s' "$task")"
+  local nm; nm=$(( $(memory_count "$zone" "$team") + $(memory_count "$zone") ))
+  (( nm > 0 )) && brief+=" $(_t "TEAM MEMORY: %d note(s), read them first with 'prama-agent memory show'." "$nm")"
   queue_push "$cs" "$brief"
-  bus_event queued "${PRAMA_SESSION:-operator}" "$cs" "equipo $team: ${members[*]:-}${task:+ · objetivo: $task}"
+  _tv evtext 'team %s: %s' "$team" "${members[*]:-}"
+  [ -n "$task" ] && evtext+=$(_t ' · objective: %s' "$task")
+  bus_event queued "${PRAMA_SESSION:-operator}" "$cs" "$evtext"
   watchdog_ensure || true
-  declare -F telegram_notify >/dev/null && telegram_notify "🤝 Equipo «$team» en '$zone': $cs + ${#members[@]} ejecutor(es)" >/dev/null 2>&1
+  declare -F telegram_notify >/dev/null && telegram_notify "$(_t "🤝 Team \"%s\" in '%s': %s + %d executor(s)" "$team" "$zone" "$cs" "${#members[@]}")" team "$cs" >/dev/null 2>&1
 
   if (( open )) && [ -t 0 ] && [ -t 1 ]; then
     subcmd_cockpit "$cs"
   else
-    info_msg "Cockpit del equipo: prama-agent cockpit $zone --team $team"
+    info_msg "$(_t 'Team cockpit: prama-agent cockpit %s --team %s' "$zone" "$team")"
   fi
 }
 
 # _swarm_stop <zone> [--team T | --all]  |  _swarm_stop <coordinator session>
 _swarm_stop() {
   local arg=${1:-} team='' all=0 m zone c
-  [ -n "$arg" ] || die "Uso: prama-agent swarm stop <zona> [--team <nombre>|--all] | <sesión del coordinador>"
+  [ -n "$arg" ] || die "$(_t 'Usage: prama-agent swarm stop <zone> [--team <name>|--all] | <coordinator session>')"
   shift
   while (( $# )); do
     case "$1" in
-      --team|-T) team=${2:?--team requiere un nombre}; shift 2 ;;
+      --team|-T) team=${2:?$(_t '--team requires a name')}; shift 2 ;;
       --all)     all=1; shift ;;
-      *)         die "Argumento sobrante: '$1'" ;;
+      *)         die "$(_t "Unexpected argument: '%s'" "$1")" ;;
     esac
   done
   local -a coords=()
   if valid_session_name "$arg" && tmx_has "$arg" && [ "$(session_role "$arg")" = coordinator ]; then
     coords=("$arg")
   else
-    m=$(match_zone "$arg") || die "Zona o coordinador desconocido: '$arg'"
+    m=$(match_zone "$arg") || die "$(_t "Unknown zone or coordinator: '%s'" "$arg")"
     zone=$m
     if [ -n "$team" ]; then
-      c=$(find_team "$zone" "$team") || die "No hay un equipo «$team» en '$zone' (equipos: $(_swarm_teams_hint "$zone"))."
+      c=$(find_team "$zone" "$team") || die "$(_t "There is no team \"%s\" in '%s' (teams: %s)." "$team" "$zone" "$(_swarm_teams_hint "$zone")")"
       coords=("$c")
     else
       mapfile -t coords < <(zone_teams "$zone")
-      (( ${#coords[@]} )) || die "No hay equipos en '$zone'."
+      (( ${#coords[@]} )) || die "$(_t "No teams in '%s'." "$zone")"
       (( ${#coords[@]} == 1 || all )) \
-        || die "La zona '$zone' tiene ${#coords[@]} equipos ($(_swarm_teams_hint "$zone")): indica --team <nombre> o --all."
+        || die "$(_t "Zone '%s' has %d teams (%s): give --team <name> or --all." "$zone" "${#coords[@]}" "$(_swarm_teams_hint "$zone")")"
     fi
   fi
   for c in "${coords[@]}"; do _swarm_stop_team "$c"; done
@@ -229,7 +263,7 @@ _swarm_stop_team() {
   done < <(prama_sessions)
   tmx_kill "$cs"; state_remove "$cs"; bus_event stopped "${PRAMA_SESSION:-operator}" "$cs" "swarm stop"
   tmx_kill "$cockpit" 2>/dev/null || true
-  ok "Equipo «$label» cerrado: $cs y $n ejecutor(es)."
+  ok "$(_t "Team \"%s\" closed: %s and %d executor(s)." "$label" "$cs" "$n")"
 }
 
 # ── Cockpit ─────────────────────────────────────────────────────────────────
@@ -276,7 +310,7 @@ cockpit_ensure() {
   local -a members=()
   dir=$(zone_dir "$zone") || dir=$HOME
   mapfile -t members < <(_cockpit_members "$zone" "$coord")
-  (( ${#members[@]} )) || { warn "No hay agentes en '$zone'. Lanza un equipo: prama-agent swarm $zone --team <nombre>"; return 1; }
+  (( ${#members[@]} )) || { warn "$(_t "No agents in '%s'. Launch a team: prama-agent swarm %s --team <name>" "$zone" "$zone")"; return 1; }
   cs=$(cockpit_session "$zone" "$coord")
   valid_session_name "$cs" || return 1
   sig="${members[*]}"
@@ -308,7 +342,7 @@ cockpit_ensure() {
     local watch_cmd
     printf -v watch_cmd '%q ' "$SELF_PATH" bus watch
     pane=$(tmx split-window -P -F '#{pane_id}' -t "$last" -c "$dir" "${env_args[@]}" "${watch_cmd% }") \
-      && tmx select-pane -t "$pane" -T "☍ BUS · eventos en vivo" 2>/dev/null
+      && tmx select-pane -t "$pane" -T "$(_t '☍ BUS · live events')" 2>/dev/null
     # Coordinator large on the left, the rest stacked on the right.
     tmx set-option -w -t "$cs" main-pane-width 58% 2>/dev/null
     tmx select-layout -t "$first" main-vertical >/dev/null 2>&1
@@ -329,20 +363,20 @@ cockpit_scope() {
   if [ -n "$arg" ] && valid_session_name "$arg" && tmx_has "$arg" && [ -n "$(state_get "$arg" ZONE)" ]; then
     zone=$(state_get "$arg" ZONE); coord=$(session_team "$arg") || coord=''
   elif [ -n "$arg" ]; then
-    m=$(match_zone "$arg") || { warn "Zona o sesión desconocida: '$arg'"; return 1; }
+    m=$(match_zone "$arg") || { warn "$(_t "Unknown zone or session: '%s'" "$arg")"; return 1; }
     zone=$m
     if [ -n "$team" ]; then
-      coord=$(find_team "$zone" "$team") || { warn "No hay un equipo «$team» en '$zone' (equipos: $(_swarm_teams_hint "$zone"))."; return 1; }
+      coord=$(find_team "$zone" "$team") || { warn "$(_t "There is no team \"%s\" in '%s' (teams: %s)." "$team" "$zone" "$(_swarm_teams_hint "$zone")")"; return 1; }
     else
       n=$(zone_teams "$zone" | grep -c . || true)
       if (( n == 1 )); then coord=$(zone_teams "$zone")
-      elif (( n > 1 )); then warn "La zona '$zone' tiene $n equipos ($(_swarm_teams_hint "$zone")): indica --team <nombre>."; return 1
+      elif (( n > 1 )); then warn "$(_t "Zone '%s' has %d teams (%s): give --team <name>." "$zone" "$n" "$(_swarm_teams_hint "$zone")")"; return 1
       fi
     fi
   else
     # No argument: the first team (or the first zone with agents).
     IFS='|' read -r m _ zone < <(prama_team_order | head -n 1)
-    [ -n "$zone" ] || { warn "No hay agentes activos. Lanza un equipo: prama-agent swarm <zona> --team <nombre>"; return 1; }
+    [ -n "$zone" ] || { warn "$(_t 'No active agents. Launch a team: prama-agent swarm <zone> --team <name>')"; return 1; }
     coord=$(session_team "$m") || coord=''
   fi
   printf '%s|%s' "$zone" "$coord"
@@ -364,7 +398,7 @@ subcmd_cockpit() {
   local cs
   cs=$(cockpit_ensure "$zone" "${focus:-$coord}" "$coord") || exit 1
   if (( ! attach )) || [ ! -t 0 ] || [ ! -t 1 ]; then
-    info_msg "Cockpit listo: prama-agent attach $cs"
+    info_msg "$(_t 'Cockpit ready: prama-agent attach %s' "$cs")"
     return 0
   fi
   type restore_locale >/dev/null 2>&1 && restore_locale
@@ -422,9 +456,10 @@ _nav_cockpit() {
     return 0
   fi
   zone=$(state_get "$cur" ZONE)
-  [ -n "$zone" ] || { tmx display-message -c "$client" "Esta sesión no pertenece a una zona" 2>/dev/null; return 0; }
+  local m
+  [ -n "$zone" ] || { _tv m 'This session does not belong to a zone'; tmx display-message -c "$client" "$m" 2>/dev/null; return 0; }
   local coord; coord=$(session_team "$cur") || coord=''
-  cs=$(cockpit_ensure "$zone" "$cur" "$coord" 2>/dev/null) || { tmx display-message -c "$client" "Sin agentes en $zone" 2>/dev/null; return 0; }
+  cs=$(cockpit_ensure "$zone" "$cur" "$coord" 2>/dev/null) || { _tv m 'No agents in %s' "$zone"; tmx display-message -c "$client" "$m" 2>/dev/null; return 0; }
   _nav_switch "$client" "$cs"
 }
 
@@ -511,14 +546,16 @@ _nav_pick() {
     done < <(zone_teams "$zone")
     (( n )) || { rows+=("▦ cockpit  $zone"); targets+=("@cockpit:$zone"); }
   done
-  rows+=("◂ menú de prama"); targets+=("@menu")
+  local l_menu l_prompt l_head l_num
+  _tv l_menu '◂ prama menu'; _tv l_prompt 'agent › '; _tv l_head '↵ go · Esc close'; _tv l_num 'Number (Enter closes): '
+  rows+=("$l_menu"); targets+=("@menu")
   if command -v fzf >/dev/null 2>&1; then
-    choice=$(printf '%s\n' "${rows[@]}" | fzf --no-sort --layout=reverse --prompt='agente › ' \
-      --header='↵ ir · Esc cerrar' --info=hidden) || return 0
+    choice=$(printf '%s\n' "${rows[@]}" | fzf --no-sort --layout=reverse --prompt="$l_prompt" \
+      --header="$l_head" --info=hidden) || return 0
     for (( i = 0; i < ${#rows[@]}; i++ )); do [ "${rows[i]}" = "$choice" ] && { target=${targets[i]}; break; }; done
   else
     for (( i = 0; i < ${#rows[@]}; i++ )); do printf '%2d  %s\n' "$(( i + 1 ))" "${rows[i]}"; done
-    printf '\nNúmero (Enter cierra): '
+    printf '\n%s' "$l_num"
     IFS= read -r choice || return 0
     [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#rows[@]} )) || return 0
     target=${targets[$(( choice - 1 ))]}

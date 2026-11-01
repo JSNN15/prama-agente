@@ -52,6 +52,33 @@ ui_detect_color_depth() {
   fi
 }
 
+# ── Color themes ────────────────────────────────────────────────────────────
+# Each theme is 16 hex colors, in this order:
+#   accent accent2 ok warn err purple muted border text header-bg danger-bg select-bg select-fg
+#   key-badge-bg gradient-end danger-fg
+# The same palette paints the TUI, the tmux status bar and panes, and the fzf inspector.
+# "light" is for terminals with a light background; "mono" has no hues (high contrast).
+PRAMA_THEMES=(midnight ocean forest ember violet light mono)
+
+# _ui_theme_hex <name> → TH (array); 1 when the theme does not exist.
+_ui_theme_hex() {
+  case $1 in
+    midnight) TH=(38bdf8 818cf8 34d399 fbbf24 f87171 c084fc 64748b 334155 e2e8f0 0f172a 7f1d1d 1e3a5f f0f9ff 1e293b c084fc fee2e2) ;;
+    ocean)    TH=(22d3ee 60a5fa 2dd4bf facc15 fb7185 a78bfa 64849b 1e4a5f e0f2fe 082f49 7f1d1d 0e4a6e ecfeff 0c3b52 3b82f6 ffe4e6) ;;
+    forest)   TH=(4ade80 a3e635 34d399 facc15 f87171 2dd4bf 6f876f 2f4a36 e7f5e9 0f2417 7f1d1d 1f4d2e f0fdf4 1a3322 a3e635 fee2e2) ;;
+    ember)    TH=(fb923c f472b6 a3e635 fbbf24 ef4444 f472b6 937a6f 4a2f28 fdf0e6 2a120b 7f1d1d 5a2a17 fff7ed 3a1d14 f43f5e fee2e2) ;;
+    violet)   TH=(c084fc f0abfc 4ade80 fcd34d fb7185 e879f9 857aa3 3f3359 ede9fe 1e1533 831843 4c1d95 faf5ff 2e1f4f f0abfc fce7f3) ;;
+    light)    TH=(0369a1 4f46e5 047857 b45309 b91c1c 7e22ce 64748b cbd5e1 1e293b e2e8f0 fecaca bfdbfe 0f172a dbe3ec 7e22ce 7f1d1d) ;;
+    mono)     TH=(f5f5f5 d4d4d4 e5e5e5 fafafa ffffff d4d4d4 8a8a8a 525252 e5e5e5 262626 404040 4a4a4a ffffff 333333 a3a3a3 ffffff) ;;
+    *) return 1 ;;
+  esac
+}
+
+valid_theme() { is_in "${1:-}" "${PRAMA_THEMES[@]}"; }
+
+# ui_hex <fg|bg> <rrggbb> → UI_S
+ui_hex() { ui_rgb "$1" $(( 16#${2:0:2} )) $(( 16#${2:2:2} )) $(( 16#${2:4:2} )); }
+
 ui_init_theme() {
   IS_TERM=0 HAS_COLOR=0
   if [ -t 1 ] && [ "${TERM:-}" != "dumb" ]; then
@@ -59,34 +86,43 @@ ui_init_theme() {
     [ -z "${NO_COLOR:-}" ] && HAS_COLOR=1
   fi
   ui_detect_color_depth
+  local -a TH=()
+  UI_THEME=${PRAMA_THEME:-midnight}
+  _ui_theme_hex "$UI_THEME" || { UI_THEME=midnight; _ui_theme_hex midnight; }
+  # Hex values for tmux and fzf (with '#'), set even without colors in this terminal.
+  TH_ACCENT="#${TH[0]}" TH_ACCENT2="#${TH[1]}" TH_OK="#${TH[2]}" TH_WARN="#${TH[3]}" TH_ERR="#${TH[4]}"
+  TH_PURP="#${TH[5]}" TH_MUTED="#${TH[6]}" TH_BORDER="#${TH[7]}" TH_TEXT="#${TH[8]}" TH_HEAD="#${TH[9]}"
+  TH_DANGER="#${TH[10]}" TH_SEL="#${TH[11]}" TH_SELFG="#${TH[12]}" TH_BADGE="#${TH[13]}" TH_GRAD="#${TH[14]}"
+  UI_GRAD="$(( 16#${TH[0]:0:2} )) $(( 16#${TH[0]:2:2} )) $(( 16#${TH[0]:4:2} )) $(( 16#${TH[14]:0:2} )) $(( 16#${TH[14]:2:2} )) $(( 16#${TH[14]:4:2} ))"
   if (( HAS_COLOR )); then
-    ui_rgb fg 56 189 248;   C_NEON=$UI_S       # sky     #38bdf8
-    ui_rgb fg 129 140 248;  C_INDIGO=$UI_S     # indigo  #818cf8
-    ui_rgb fg 52 211 153;   C_LIVE=$UI_S       # emerald #34d399
-    ui_rgb fg 251 191 36;   C_BRASS=$UI_S      # amber   #fbbf24
-    ui_rgb fg 248 113 113;  C_ERR=$UI_S        # coral   #f87171
-    ui_rgb fg 192 132 252;  C_PURP=$UI_S       # purple  #c084fc
-    ui_rgb fg 100 116 139;  C_MUTED=$UI_S      # slate-500
-    ui_rgb fg 51 65 85;     C_BORDER=$UI_S     # slate-700
+    ui_hex fg "${TH[0]}";  C_NEON=$UI_S        # accent
+    ui_hex fg "${TH[1]}";  C_INDIGO=$UI_S      # second accent
+    ui_hex fg "${TH[2]}";  C_LIVE=$UI_S        # ok / running
+    ui_hex fg "${TH[3]}";  C_BRASS=$UI_S       # warning
+    ui_hex fg "${TH[4]}";  C_ERR=$UI_S         # error / danger
+    ui_hex fg "${TH[5]}";  C_PURP=$UI_S        # coordinators, worktrees
+    ui_hex fg "${TH[6]}";  C_MUTED=$UI_S       # secondary text
+    ui_hex fg "${TH[7]}";  C_BORDER=$UI_S      # box borders
     C_BORDER_HI=$C_NEON
-    ui_rgb fg 226 232 240;  C_TEXT=$UI_S       # slate-200 (primary text)
-    ui_rgb bg 15 23 42;     C_HEAD_BG=$UI_S    # slate-900 (header bar)
-    ui_rgb bg 127 29 29;    C_WARN_BG=$UI_S    # red-900   (danger banners)
+    ui_hex fg "${TH[8]}";  C_TEXT=$UI_S        # primary text
+    ui_hex bg "${TH[9]}";  C_HEAD_BG=$UI_S     # header bar
+    ui_hex bg "${TH[10]}"; C_WARN_BG=$UI_S     # danger banners
+    ui_hex fg "${TH[15]}"; C_WARN_FG=$UI_S
     C_DIM=$'\e[2m'
     C_BOLD=$'\e[1m'
     C_OFF=$'\e[0m'
     local sel_bg sel_fg
-    ui_rgb bg 30 58 95;     sel_bg=$UI_S
-    ui_rgb fg 240 249 255;  sel_fg=$UI_S
+    ui_hex bg "${TH[11]}"; sel_bg=$UI_S
+    ui_hex fg "${TH[12]}"; sel_fg=$UI_S
     BAR_ON="$sel_bg$sel_fg"$'\e[1m'
     C_SEL=$sel_bg
-    ui_rgb bg 30 41 59;     KEY_BADGE=$UI_S
+    ui_hex bg "${TH[13]}"; KEY_BADGE=$UI_S
     KEY_BADGE+=$C_NEON$'\e[1m'
     IS_TTY=1
   else
     C_NEON='' C_INDIGO='' C_LIVE='' C_BRASS='' C_ERR='' C_PURP='' C_MUTED='' C_TEXT=''
     C_BORDER='' C_BORDER_HI='' C_DIM='' C_BOLD='' C_OFF='' BAR_ON='' KEY_BADGE=''
-    C_HEAD_BG='' C_WARN_BG='' C_SEL=''
+    C_HEAD_BG='' C_WARN_BG='' C_WARN_FG='' C_SEL=''
     IS_TTY=0
   fi
 }

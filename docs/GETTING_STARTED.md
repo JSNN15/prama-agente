@@ -19,8 +19,8 @@ Recommended packages: `sudo apt install tmux git jq` (and `mosh` if you will con
 ## 2. Install prama-agent
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agente/main/install.sh | sudo bash   # system-wide
-curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agente/main/install.sh | bash        # just for you
+curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agent/main/install.sh | sudo bash   # system-wide
+curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agent/main/install.sh | bash        # just for you
 ```
 
 ## 3. Run the setup wizard
@@ -58,6 +58,10 @@ prama-agent zones remove backend
 
 Registered zones live in `~/.config/prama-agent/zones.conf` (data only). You can also declare them in
 `config.env` (`ZONES`, `ZONE_DIRS`), which wins on a name clash.
+
+**Language and colors.** The first question is the interface language (English or Spanish; later:
+`prama-agent lang es`). `prama-agent theme` shows the color themes (`theme light` for a light
+terminal); both are also under **⚙ Preferences** in the menu.
 
 **Permissions.** `ask` (the agent asks before each action, the default) or `yolo` (no confirmations,
 only for isolated servers you control). Any agent can override it with `--ask`, `--plan` or `--yolo`.
@@ -108,6 +112,8 @@ team. Running `swarm` again with an existing team name adds workers to that team
 | Next / previous agent | `Ctrl+b n` / `Ctrl+b p` |
 | Close one agent | `prama-agent stop <session>`, or `x` in the menu |
 | Close one team | `prama-agent swarm stop backend --team seguridad`, or `x` on its coordinator |
+| Manage teams | `m` in the menu: cockpit, message, add agents, memory, close |
+| Team memory | `prama-agent memory show backend --team seguridad` · `memory add …` |
 | Close everything | `prama-agent stop --all -y` |
 
 From a phone: mosh plus the compact cockpit, or the Telegram bot (`prama-agent telegram setup`). See
@@ -118,4 +124,4 @@ the README's "On your phone" section.
 - `prama-agent doctor` checks dependencies, agents, hooks and configuration.
 - `prama-agent fleet status` shows why an agent is blocked (`login`, `credit`, `limit`, `trust`, `model`).
 - Agents report prama-agent bugs themselves (`prama-agent feedback list`); `feedback export <id>` gives
-  you an issue body for [GitHub](https://github.com/JSNN15/prama-agente/issues).
+  you an issue body for [GitHub](https://github.com/JSNN15/prama-agent/issues).

@@ -8,6 +8,9 @@
 
 shopt -s extglob
 
+# shellcheck source=lib/i18n.sh
+source "${BASH_SOURCE[0]%/*}/i18n.sh"
+
 # ── Defaults (overridable from config.env or the environment) ───────────────
 PRAMA_BRAND="${PRAMA_BRAND:-PRAMA AGENT}"
 PRAMA_SESSION_PREFIX="${PRAMA_SESSION_PREFIX:-prama}"
@@ -21,6 +24,10 @@ PRAMA_MENU_KEY="${PRAMA_MENU_KEY:-M-m}"                 # key that detaches back
 PRAMA_NAV_KEY="${PRAMA_NAV_KEY:-M-a}"                   # agent picker popup
 PRAMA_COCKPIT_KEY="${PRAMA_COCKPIT_KEY:-M-c}"           # team cockpit ⇄ agent
 PRAMA_COMPACT_COLS="${PRAMA_COMPACT_COLS:-100}"         # narrower clients (phones) get the compact layout
+# Language and theme from the environment win over config.env (PRAMA_LANG=en prama-agent help).
+PRAMA_LANG_ENV=${PRAMA_LANG:-} PRAMA_THEME_ENV=${PRAMA_THEME:-}
+PRAMA_LANG="${PRAMA_LANG:-auto}"                        # interface language: en | es | auto (from the locale)
+PRAMA_THEME="${PRAMA_THEME:-midnight}"                  # color theme (prama-agent theme lists them)
 PRAMA_HOOKS="${PRAMA_HOOKS:-1}"                         # inject state hooks into claude sessions
 PRAMA_WATCHDOG="${PRAMA_WATCHDOG:-1}"                   # auto-start the fleet watchdog on launch
 PRAMA_WATCH_INTERVAL="${PRAMA_WATCH_INTERVAL:-5}"
@@ -40,7 +47,7 @@ AGENTS=("${SUPPORTED_AGENTS[@]}")
 AGENT_DESCS=(
   "Claude Code (Anthropic / API)"
   "Agy (Antigravity CLI)"
-  "OpenCode (OpenRouter · modelos abiertos)"
+  "OpenCode (OpenRouter · open models)"   # translated where shown (I18N)
 )
 ZONES=()
 ZONE_DIRS=()
@@ -68,15 +75,15 @@ is_in() {
 ensure_private_dir() {
   local d=$1
   if [ -L "$d" ]; then
-    die "Ruta insegura (es un symlink): $d"
+    die "$(_t 'Unsafe path (it is a symlink): %s' "$d")"
   fi
   if [ ! -d "$d" ]; then
-    (umask 077 && mkdir -p "$d") || die "No se pudo crear $d"
+    (umask 077 && mkdir -p "$d") || die "$(_t 'Could not create %s' "$d")"
   fi
   local owner
   owner=$(stat -c %u "$d" 2>/dev/null || stat -f %u "$d" 2>/dev/null || echo "")
   if [ -n "$owner" ] && [ "$owner" != "$EUID" ]; then
-    die "El directorio $d pertenece a otro usuario (uid $owner); se rechaza por seguridad."
+    die "$(_t 'The directory %s belongs to another user (uid %s); refused for safety.' "$d" "$owner")"
   fi
   chmod 700 "$d" 2>/dev/null || true
 }
@@ -91,6 +98,12 @@ prama_load_config() {
   # Re-derive paths in case config.env overrode their inputs.
   PRAMA_BUS_DIR="${PRAMA_BUS_DIR:-$PRAMA_STATE_HOME/bus}"
   PRAMA_TMUX_CONF="${PRAMA_TMUX_CONF:-$PRAMA_STATE_HOME/tmux.conf}"
+  # Language and theme may come from config.env: reload the catalog and the palette.
+  [ -n "$PRAMA_LANG_ENV" ] && PRAMA_LANG=$PRAMA_LANG_ENV
+  [ -n "$PRAMA_THEME_ENV" ] && PRAMA_THEME=$PRAMA_THEME_ENV
+  i18n_init
+  if declare -F ui_init_theme >/dev/null; then ui_init_theme; fi
+  if declare -F tui_styles >/dev/null; then tui_styles; fi
 }
 
 # zones.conf: zones registered with `prama-agent zones add` (or `setup`), one "name|dir|description"
@@ -379,31 +392,38 @@ tmx_attach() {
 }
 
 # Writes the managed tmux config for the prama server (never ~/.tmux.conf) and reloads it.
-TMUX_CONF_VERSION="prama-agent-managed-v6.2.0"
+TMUX_CONF_VERSION="prama-agent-managed-v6.4.0"
 ensure_tmux_conf() {
   local force=${1:-0}
+  # The theme and the language are part of the generated file: changing either regenerates it.
+  local style="# style: theme=${UI_THEME:-midnight} lang=${PRAMA_UI_LANG:-en}"
   if (( force )) || [ ! -f "$PRAMA_TMUX_CONF" ] || ! grep -q "$TMUX_CONF_VERSION" "$PRAMA_TMUX_CONF" 2>/dev/null \
+     || ! grep -qxF "$style" "$PRAMA_TMUX_CONF" 2>/dev/null \
      || ! grep -q "bind -n $PRAMA_MENU_KEY " "$PRAMA_TMUX_CONF" 2>/dev/null; then
     local tmp="$PRAMA_TMUX_CONF.tmp.$$" nav
+    local A=${TH_ACCENT:-#38bdf8} H=${TH_HEAD:-#0f172a} T=${TH_TEXT:-#e2e8f0} B=${TH_BADGE:-#1e293b}
+    local BD=${TH_BORDER:-#334155} M=${TH_MUTED:-#64748b} OK=${TH_OK:-#34d399} SEL=${TH_SEL:-#1e3a5f} SF=${TH_SELFG:-#f0f9ff}
+    local l_agents l_hint l_nav
+    _tv l_agents 'AGENTS'; _tv l_hint ' agents · ↵ go · Esc close '; _tv l_nav '%s agents · %s cockpit' "$PRAMA_NAV_KEY" "$PRAMA_COCKPIT_KEY"
     # Key bindings call back into prama with this server's socket and state (tmux does not
     # pass the client's environment to run-shell / display-popup).
     printf -v nav 'env PRAMA_TMUX_SOCKET=%q PRAMA_STATE_HOME=%q %q --internal-nav' \
       "$PRAMA_TMUX_SOCKET" "$PRAMA_STATE_HOME" "${SELF_PATH:-prama-agent}"
     # Clickable status ranges need tmux ≥ 3.3 (Ubuntu 22.04 ships 3.2a: plain buttons there).
     local tv left_btns ptitle='' status_left status_right narrow
-    local right_full="#[fg=#64748b]#{session_name} #[fg=#34d399]● #[fg=#94a3b8]%H:%M "
+    local right_full="#[fg=$M]#{session_name} #[fg=$OK]● #[fg=$T]%H:%M "
     status_right=$right_full
     tv=$(tmux -V 2>/dev/null); tv=${tv#tmux }; tv=${tv%%[a-z-]*}
     if [[ "$tv" =~ ^([0-9]+)\.([0-9]+) ]] && (( BASH_REMATCH[1] > 3 || (BASH_REMATCH[1] == 3 && BASH_REMATCH[2] >= 3) )); then
-      left_btns="#[range=user|menu]#[bg=#38bdf8,fg=#0f172a,bold] ◂ MENU #[norange]#[range=user|agents]#[bg=#1e293b,fg=#e2e8f0] ☰ AGENTES #[norange]#[range=user|cockpit]#[bg=#334155,fg=#e2e8f0] ▦ COCKPIT #[norange]#[default] "
+      left_btns="#[range=user|menu]#[bg=$A,fg=$H,bold] ◂ MENU #[norange]#[range=user|agents]#[bg=$B,fg=$T] ☰ $l_agents #[norange]#[range=user|cockpit]#[bg=$BD,fg=$T] ▦ COCKPIT #[norange]#[default] "
       # Phones: wide tap targets, icons only, plus previous / next agent.
-      local left_compact="#[range=user|menu]#[bg=#38bdf8,fg=#0f172a,bold]  ◂  #[norange]#[range=user|prev]#[bg=#1e293b,fg=#e2e8f0]  ◀  #[norange]#[range=user|agents]#[bg=#334155,fg=#e2e8f0]  ☰  #[norange]#[range=user|next]#[bg=#1e293b,fg=#e2e8f0]  ▶  #[norange]#[range=user|cockpit]#[bg=#334155,fg=#e2e8f0]  ▦  #[norange]#[default] "
+      local left_compact="#[range=user|menu]#[bg=$A,fg=$H,bold]  ◂  #[norange]#[range=user|prev]#[bg=$B,fg=$T]  ◀  #[norange]#[range=user|agents]#[bg=$BD,fg=$T]  ☰  #[norange]#[range=user|next]#[bg=$B,fg=$T]  ▶  #[norange]#[range=user|cockpit]#[bg=$BD,fg=$T]  ▦  #[norange]#[default] "
       narrow="#{e|<:#{client_width},${PRAMA_COMPACT_COLS:-100}}"
       left_btns="#{?$narrow,${left_compact//,/#,},${left_btns//,/#,}}"
-      status_right="#{?$narrow,#[fg=#94a3b8]#{=|12|…:#{s/^${PRAMA_SESSION_PREFIX}-//:session_name}} ,$right_full}"
-      ptitle="-T ' agentes · ↵ ir · Esc cerrar '"
+      status_right="#{?$narrow,#[fg=$T]#{=|12|…:#{s/^${PRAMA_SESSION_PREFIX}-//:session_name}} ,$right_full}"
+      ptitle="-T '$l_hint'"
     else
-      left_btns="#[bg=#38bdf8,fg=#0f172a,bold] ◂ MENU #[bg=#1e293b,fg=#94a3b8] $PRAMA_NAV_KEY agentes · $PRAMA_COCKPIT_KEY cockpit #[default] "
+      left_btns="#[bg=$A,fg=$H,bold] ◂ MENU #[bg=$B,fg=$T] $l_nav #[default] "
       left_btns=${left_btns//,/#,}
     fi
     # Cockpit panes are nested clients (TERM tmux*): they get a bare status line, the buttons
@@ -432,6 +452,7 @@ set-hook -g client-session-changed { $fit }"
     fi
     cat > "$tmp" <<EOF
 # $TMUX_CONF_VERSION — generated, do not edit (regenerated by 'prama-agent doctor')
+$style
 # Applies only to the dedicated prama tmux server (tmux -L $PRAMA_TMUX_SOCKET).
 
 $shells
@@ -467,21 +488,21 @@ $fit_hooks
 # Pane titles show the agent role
 set -g pane-border-status top
 set -g pane-border-lines heavy
-set -g pane-border-format " #[bold]#{?pane_active,#[fg=#38bdf8],#[fg=#64748b]}#{pane_title}#[default] "
-set -g pane-border-style "fg=#334155"
-set -g pane-active-border-style "fg=#38bdf8"
+set -g pane-border-format " #[bold]#{?pane_active,#[fg=$A],#[fg=$M]}#{pane_title}#[default] "
+set -g pane-border-style "fg=$BD"
+set -g pane-active-border-style "fg=$A"
 
 # Status bar: left segment is a tappable "back to menu" button (Termius / mouse)
 set -g status-interval 5
-set -g status-style "bg=#0f172a,fg=#cbd5e1"
+set -g status-style "bg=$H,fg=$T"
 set -g status-left "$status_left"
 set -g status-left-length 60
 set -g status-right "$status_right"
 set -g status-right-length 60
 set -g window-status-format ""
 set -g window-status-current-format ""
-set -g message-style "bg=#1e293b,fg=#f0f9ff"
-set -g mode-style "bg=#1e3a5f,fg=#f0f9ff"
+set -g message-style "bg=$B,fg=$T"
+set -g mode-style "bg=$SEL,fg=$SF"
 EOF
     mv -f "$tmp" "$PRAMA_TMUX_CONF"
     if tmx_running; then tmx source-file "$PRAMA_TMUX_CONF" 2>/dev/null || true; fi
@@ -758,7 +779,7 @@ detect_session_state() {
   if [ "$s" = "${PRAMA_SESSION_PREFIX}-telegram-bot" ]; then printf 'BOT'; return; fi
   local snippet
   snippet=$(tmx_capture "$s" 12)
-  if [[ "$snippet" == *"PRAMA_STANDBY"* || "$snippet" == *"AGENTE FINALIZADO"* ]]; then printf 'STANDBY'
+  if [[ "$snippet" == *"PRAMA_STANDBY"* || "$snippet" == *"AGENTE FINALIZADO"* || "$snippet" == *"AGENT EXITED"* ]]; then printf 'STANDBY'
   elif [[ "$snippet" == *"PRAMA_DAEMON"* ]]; then printf 'DAEMON'
   elif [[ "$snippet" =~ esc\ to\ interrupt|Esc\ to\ cancel|Thinking|Working|Running…|Synthesizing ]]; then printf 'WORKING'
   elif session_block_info "$s" "$snippet" >/dev/null; then printf 'BLOCKED'
@@ -792,7 +813,7 @@ screen_block_reason() {
   # multibyte characters inside [...] brackets.
   mapfile -t lines < <(printf '%s\n' "$text" | strip_ansi_stream | LC_ALL=C awk '
       /^[ \t]*$/ { next }
-      /^([ \t|]|│)*(>|❯|›)/ || /\[(ALERTA PRAMA|PRAMA|TAREA|REPORTE|BROADCAST)/ { msg = 1; next }
+      /^([ \t|]|│)*(>|❯|›)/ || /\[(ALERTA PRAMA|PRAMA|TAREA|REPORTE|BROADCAST|TASK|REPORT|QUEUED TASK)/ { msg = 1; next }
       msg && (/^[ \t]*(─|━|═|-)(─|━|═|-)(─|━|═|-)/ || /^[ \t]*(⏺|●|✻|✶|✳|⎿|╭|╰)/) { msg = 0 }
       !msg { print }' | tail -n 8)
   for entry in "${BLOCK_PATTERNS[@]}"; do

@@ -2,12 +2,12 @@
 
 **English** · [Español](README.es.md)
 
-[![CI](https://github.com/JSNN15/prama-agente/actions/workflows/ci.yml/badge.svg)](https://github.com/JSNN15/prama-agente/actions/workflows/ci.yml)
+[![CI](https://github.com/JSNN15/prama-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/JSNN15/prama-agent/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![bash ≥ 4.4](https://img.shields.io/badge/bash-%E2%89%A5%204.4-4EAA25)
 ![tmux ≥ 3.2](https://img.shields.io/badge/tmux-%E2%89%A5%203.2-1BB91F)
-![Release](https://img.shields.io/github/v/release/JSNN15/prama-agente)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/JSNN15/prama-agente/badge)](https://scorecard.dev/viewer/?uri=github.com/JSNN15/prama-agente)
+![Release](https://img.shields.io/github/v/release/JSNN15/prama-agent)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/JSNN15/prama-agent/badge)](https://scorecard.dev/viewer/?uri=github.com/JSNN15/prama-agent)
 
 **A terminal control plane for CLI coding agents.** prama-agent launches, supervises and coordinates
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and Google Antigravity (`agy`) across
@@ -19,21 +19,35 @@ billing problem.
 It is plain bash on top of a dedicated tmux server: no daemon to install, no database, no Node.js.
 
 ```
- ◆ PRAMA AGENT v6.3.0  server-01                   ● 3 activos · 1 trabajando   LOAD 1.63 · RAM 21%
- Próximo agente ›  o  Rol ✦ executor   y  Permisos ● ASK   e  Remoto off   p  Perfil default
-╭─ Sesiones ───────────────────────────────── 3 ─╮╭─ ◉ prama-agy-backend ─────────────────────────╮
-│   ● claude-backend   ❖ coord listo   ▱▱▱▱   0% ││ ✦ executor · ● trabaja · CPU 3% · up 04:12    │
-│ ▸ ● └ agy-backend    ✦ exec  trabaja ▰▰▱▱  54% │├─ en vivo ─────────────────────────────────────┤
-│   ● └ agy-backend-2  ✦ exec  listo   ▱▱▱▱   0% ││ > agrega endpoint /health                     │
-├─ Acciones ─────────────────────────────────────┤│ Thinking… editando src/routes/health.ts       │
-│   ✚ Nuevo agente         claude o agy en zona  ││                                               │
-│   ❖ Nuevo equipo         coordinador + N agen… ││                                               │
-╰────────────────────────────────────────────────╯╰───────────────── ↵ entrar · t tarea · l logs ─╯
-  ↵  entrar  c  cockpit  t  tarea  l  logs  r  reiniciar  x  cerrar  n  nuevo  s  equipo  ?  ayuda
+ ◆ PRAMA AGENT v6.4.0  server-01                          ● 6 active   LOAD 1.63 · RAM 5120M (21%)
+ Next agent ›  o  Role ✦ executor   y  Permissions ● ASK   e  Remote off   p  Profile default
+╭─ Agents and teams ───────────────────────── 6 ─╮╭─ ◉ prama-backend-sec-coord ────────────────────╮
+│   ● ▍ backend · docs (1)   ready     ▱▱▱▱   0% ││ ❖ coordinator · ● ready · CPU 0% · 99M · up 0… │
+│   ● └ agy          ✦ exec  ready     ▱▱▱▱   0% ││ ⌂ ~/src/backend  ⎇ main                        │
+│ ▸ ● ▍ backend · sec (2)    ready     ▱▱▱▱   0% ││ ❖ team backend · sec · 2 agent(s)  ◎ Audit au… │
+│   ● ├ agy          ✦ exec  ready     ▱▱▱▱   0% │├─ live ─────────────────────────────────────────┤
+│   ● └ agy-2        ✦ exec  ready     ▱▱▱▱   0% ││  ╭─ ✦ PRAMA AGENT // prama-backend-sec-coord … │
+│   ● claude-web     ✦ exec  ready     ▱▱▱▱   0% ││  │ ❖ COORDINATOR · claude · profile default ·… │
+│                                                ││ —    │                                         │
+│                                                ││  ╰── M-m menu · wheel/Ctrl+b [ scroll · ~/src… │
+├─ Actions ──────────────────────────────────────┤│                                                │
+│   ✚ New agent            claude agy in a zone  ││ ╭─ Claude Code ─╮                              │
+│   ❖ New team             coordinator + N agen… ││ > review the JWT rotation in auth/keys.ts      │
+│   ☷ Teams                2 team(s) running · … ││ ⏺ Delegating the key audit to prama-backend-s… │
+│   ▦ Cockpit              watch a team live, s… ││                                                │
+│   ➤ Telegram             24/7 bot: control ev… ││                                                │
+│   ✱ Doctor               server diagnosis and… ││                                                │
+│   ⚙ Preferences          language English · t… ││                                                │
+╰────────────────────────────────────────────────╯╰─── ↵ enter · t message · + agents · c cockpit ─╯
+  ↵  enter  t  message  +  agents  c  cockpit  x  close team  m  teams  n  new     ?  help  q  quit
 ```
 
-> The interactive UI and the agents' role prompts are in Spanish; the CLI flags, JSON output and
-> documentation are bilingual. UI translation is on the [roadmap](docs/ROADMAP.md).
+**English and Spanish, seven color themes.** The whole tool speaks both languages: menu, CLI, the
+agents' role prompts (so agents report in your language), the Telegram bot. It follows your locale
+(`es_*` → Spanish), or choose with `prama-agent lang en|es|auto`. `prama-agent theme` shows the themes
+(midnight, ocean, forest, ember, violet, light for light terminals, mono for high contrast); they paint
+the menu, the tmux status bar of every agent and the fzf inspector. Both are also in the menu, under
+**⚙ Preferences** (`,`), where moving through the themes previews them live.
 
 ## Why
 
@@ -56,7 +70,7 @@ connection dropped. prama-agent turns that into a supervised fleet:
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agente/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agent/main/install.sh | sudo bash
 prama-agent setup            # first steps: agent sign-in, zones (workspaces), permissions
 ```
 
@@ -64,7 +78,7 @@ New here? **[Getting started](docs/GETTING_STARTED.md)** goes from an empty serv
 including sign-in, models and zones.
 
 Without `sudo` it installs for the current user (`~/.local/bin`, `~/.config/prama-agent`). From a clone:
-`sudo make install` or `make install`. Update later with `prama-agent update` (or `update v6.3.0`).
+`sudo make install` or `make install`. Update later with `prama-agent update` (or `update v6.4.0`).
 Tested on Ubuntu 22.04 / 24.04 and Debian 12 (tmux 3.2a, 3.3a and 3.4), with any login shell.
 
 Requirements: bash ≥ 4.4, tmux ≥ 3.2 (3.3+ for clickable status-bar buttons and the phone layout), git. Recommended: `jq`
@@ -85,10 +99,24 @@ prama-agent status                            # fleet overview
 prama-agent attach prama-claude-backend       # reattach (Alt+m returns to the menu)
 ```
 
-In the interactive UI: `n` new agent, `s` new team, `↵` attach, `c` team cockpit, `t` send a task,
-`l` history, `r`/`x` restart/stop, `/` filter, `?` help. Sessions are listed as teams (a coordinator
-followed by its agents); `x` on a coordinator closes its whole team. It adapts to the terminal width (side-by-side from 100 columns,
-stacked on a phone), refreshes every 2 s and supports touch and mouse wheel.
+In the interactive UI the keybar always shows the keys for what is selected (destructive ones in red),
+and `?` opens every shortcut grouped by task:
+
+| Key | Action | Key | Action |
+| --- | --- | --- | --- |
+| `↑↓` `jk` `1-9` | move | `↵` | enter the session / choose |
+| `n` | new agent (wizard) | `s` | new team (coordinator + N agents) |
+| `m` | **teams**: cockpit, message, add agents, memory, close | `+` | add agents to the selected team |
+| `t` | send a task (to a coordinator: a message) | `c` | team cockpit |
+| `l` | history (`less`) | `r` / `x` | restart / close (asks first) |
+| `/` | filter | `f` | `fzf` inspector with preview |
+| `,` | preferences: language, theme, mouse | `?` | help |
+| `o` `y` `e` `p` `w` `g` | role · permissions · remote · LLM profile · worktree · background | `q` | quit |
+
+Sessions are grouped by team: the coordinator row is the team (`▍ backend · sec (2)`, one color per
+team) and its agents hang below it (`├ agy`, `└ agy-2`); `x` on a coordinator closes the whole team and
+nothing else. The layout adapts to the terminal width (side by side from 100 columns, stacked on a
+phone), refreshes every 2 s and supports touch and mouse wheel.
 
 A **zone** is a named working directory, usually a repository: `prama-agent zones add backend /srv/api`
 (or `setup`), `zones scan` lists the repositories not registered yet. Until you register one, every git
@@ -122,13 +150,32 @@ from the cockpit:
 | Key | Status-bar button | Action |
 | --- | --- | --- |
 | `Alt+m` | `◂ MENU` | back to the menu (agents keep running) |
-| `Alt+a` | `☰ AGENTES` | agent list (teams, state, model, quota): jump to any agent or cockpit |
+| `Alt+a` | `☰ AGENTS` | agent list (teams, state, model, quota): jump to any agent or cockpit |
 | `Alt+c` | `▦ COCKPIT` | team cockpit ⇄ the agent in focus |
 | `Ctrl+b n` / `Ctrl+b p` | `▶` / `◀` (phone) | next / previous agent; inside the cockpit, the next / previous pane |
 | `Ctrl+b z` | | zoom the focused cockpit pane |
 
 Keys are configurable (`PRAMA_MENU_KEY`, `PRAMA_NAV_KEY`, `PRAMA_COCKPIT_KEY`); the buttons work by
 touch in Termius, Blink or any terminal with mouse support.
+
+### Team memory
+
+A conversation dies with its agent (a restart, a model change, a quota); the team's decisions should not.
+Every team has a shared memory of short, dated notes, and every zone one shared by all its teams:
+
+```bash
+prama-agent memory show backend --team sec        # the zone's notes, then the team's
+prama-agent memory add backend --team sec "JWT keys rotate daily; never log them"
+prama-agent memory add backend --zone-wide "Python 3.12, FastAPI, tests with pytest -q"
+prama-agent memory                                # every memory: zone, team, notes, last change
+```
+
+The agents use it themselves: their role prompt tells them to read it when they start and to record
+decisions, conventions and where the work stands with `prama-agent memory add` (an agent writes to its
+own team). The coordinator's brief says how many notes are waiting, so a restarted coordinator or a new
+worker picks the work up where it was. Notes live on the server (`~/.local/state/prama-agent/memory`,
+mode `0700`), redacted like bug reports, newest `PRAMA_MEMORY_MAX_LINES` (200) kept; only the operator
+can clear one. The menu (**Teams → Team memory**) and Telegram (**🧠 Memory**) show and add notes too.
 
 ## On your phone
 
@@ -240,12 +287,24 @@ prama-agent telegram start     # 24/7 bot in a persistent session (status | logs
 One-time pairing code (only your chat and user are authorised), inline menus and argument
 whitelists. From the bot you can:
 
-- **Teams** (`/equipos`): every team, several per zone, with its agents, state, model and quota; *talk
+- **Teams** (`/teams`): every team, several per zone, with its agents, state, model and quota; *talk
   to the coordinator* (what you write next goes to it), view its screen, add a worker, or close that
   team (with confirmation). *New team* asks for the zone, the team (an existing one, a suggested name or
   your own) and the workers (`agy × 1-3`, …), then takes your next message as the objective.
-- **Quota** (`/cuota`): 5 h / 7 d / context per agent, flagged at 90 %.
-- **Agents**: view a screen, talk, launch, restart or stop; **bug reports** from agents (`/reportes`).
+- **Alerts** (`/alerts`): agents that need you (blocked by a login, credit or quota, stopped, or past
+  90 % of a quota window), each with *view screen*, *restart* and *close*. The watchdog's alerts also
+  arrive as messages carrying those buttons, so you act on them in one tap.
+- **Daemons** (`/daemons`): daemon agents with their state and queue; *queue a task* takes your next
+  message.
+- **Team memory** (team → 🧠 Memory): the team's latest notes; *add a note* takes your next message.
+- **Notifications** (`/notify`): choose what the bot sends — everything, important (no bus traffic),
+  alerts only, or nothing — and `/mute 1h` (30m, 8h, 24h, off) to receive them without sound.
+  Also from the server: `prama-agent telegram alerts important`, `prama-agent telegram mute 8h`.
+- **Quota** (`/quota`): 5 h / 7 d / context per agent, flagged at 90 %.
+- **Agents**: view a screen, talk, launch, restart or stop; **bug reports** from agents (`/reports`).
+
+Commands work in both languages (`/teams` = `/equipos`, `/alerts` = `/alertas`, `/mute` = `/silencio`…);
+the bot's menu and texts follow the interface language.
 
 The bot is a remote terminal: protect your Telegram account with two-step verification.
 
@@ -258,7 +317,7 @@ includes an internal channel for that:
 prama-agent feedback "fleet model agy-backend-2 gemini-4-argon-medium: restarted with the old model"   # agent or you
 prama-agent feedback list                  # open reports (also in doctor, the menu and Telegram /reportes)
 prama-agent feedback show <id>             # report + context: version, agent, model, state, recent bus events
-prama-agent feedback export <id> | gh issue create -R JSNN15/prama-agente -t "…" -F -
+prama-agent feedback export <id> | gh issue create -R JSNN15/prama-agent -t "…" -F -
 prama-agent feedback close <id>
 ```
 
@@ -295,6 +354,11 @@ prama-agent claude backend --profile deepseek
 | `PRAMA_MENU_KEY` / `PRAMA_NAV_KEY` / `PRAMA_COCKPIT_KEY` | `M-m` / `M-a` / `M-c` | navigation keys inside tmux |
 | `PRAMA_COMPACT_COLS` | `100` | clients narrower than this get the phone layout |
 | `PRAMA_FEEDBACK_MAX_OPEN` | `50` | open bug reports before agents are asked to wait |
+| `PRAMA_LANG` | `auto` | interface language: `en`, `es`, `auto` (from the locale); `prama-agent lang` |
+| `PRAMA_THEME` | `midnight` | color theme; `prama-agent theme` lists them |
+| `PRAMA_TUI_MOUSE` | `1` | mouse and touch in the menu |
+| `PRAMA_TG_NOTIFY` | `all` | Telegram notifications: `all`, `important`, `alerts`, `off` (the bot's `/notify` overrides it) |
+| `PRAMA_MEMORY_MAX_LINES` | `200` | notes kept per team / zone memory |
 | `PRAMA_EXPERIMENTAL` | `0` | enable experimental agents (OpenCode) |
 
 **Worktrees** (`-w <branch>`) are created outside the repository
@@ -340,7 +404,7 @@ Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). Changes: [CHANGELOG.md](CHANGE
 
 ## Author
 
-Created and maintained by **Julian Neira Nova** (Hualpén, Chile) · [@JSNN15](https://github.com/JSNN15).
+Created and maintained by **Julian Neira Nova** (Santiago de Chile) · [@JSNN15](https://github.com/JSNN15).
 If you use prama-agent in your work, [CITATION.cff](CITATION.cff) has the citation.
 
 ## License

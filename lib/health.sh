@@ -210,12 +210,18 @@ statusline_ingest() {
   return 0
 }
 
-# _fmt_reset <epoch> → "18:40" today, "vie 18:40" later
+# _fmt_reset <epoch> → "18:40" within a day, "Fri 18:40" (es: "vie 18:40") later. The weekday
+# comes from the interface language, not from the system locale.
 _fmt_reset() {
   [[ "${1:-}" =~ ^[0-9]+$ ]] || return 0
-  local now=${EPOCHSECONDS:-$(date +%s)}
-  if (( $1 - now < 86400 )); then date -d "@$1" +%H:%M 2>/dev/null
-  else date -d "@$1" '+%a %H:%M' 2>/dev/null; fi
+  local now=${EPOCHSECONDS:-$(date +%s)} d hm
+  if (( $1 - now < 86400 )); then date -d "@$1" +%H:%M 2>/dev/null; return 0; fi
+  read -r d hm < <(date -d "@$1" '+%u %H:%M' 2>/dev/null) || return 0
+  case $d in
+    1) _tv d 'Mon' ;; 2) _tv d 'Tue' ;; 3) _tv d 'Wed' ;; 4) _tv d 'Thu' ;;
+    5) _tv d 'Fri' ;; 6) _tv d 'Sat' ;; 7) _tv d 'Sun' ;;
+  esac
+  printf '%s %s\n' "$d" "$hm"
 }
 
 quota_label() {
@@ -303,7 +309,7 @@ _watch_alert() {
   while IFS= read -r c; do
     deliver_to_session "$c" "$text" || true
   done < <(_watch_coordinators "$s")
-  declare -F telegram_notify >/dev/null && telegram_notify "$text"
+  declare -F telegram_notify >/dev/null && telegram_notify "$text" alert "$s"
   return 0
 }
 
@@ -311,7 +317,7 @@ _watch_log() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 # One pass over the fleet. Uses the global associative arrays W_PREV and W_READY.
 watchdog_tick() {
-  local s st info reason detail prev key
+  local s st info reason detail prev key msg
   declare -A seen=()
   while IFS= read -r s; do
     seen[$s]=1
@@ -325,20 +331,25 @@ watchdog_tick() {
     if [ "$key" != "$prev" ]; then
       case "$st" in
         BLOCKED)
-          _watch_log "▲ $s bloqueado ($reason): $detail"
+          _tv msg '▲ %s blocked (%s): %s' "$s" "$reason" "$detail"; _watch_log "$msg"
           bus_event blocked watchdog "$s" "$reason: $detail"
-          _watch_alert "$s" "[ALERTA PRAMA] '$s' está BLOQUEADO ($reason): ${detail:0:160}. Sus tareas quedan en cola. Opciones: 'prama-agent fleet restart $s', 'prama-agent fleet model $s <modelo>', reasignar con 'prama-agent bus assign', o avisar al operador si requiere login manual." ;;
+          _tv msg "[PRAMA ALERT] '%s' is BLOCKED (%s): %s. Its tasks stay queued. Options: 'prama-agent fleet restart %s', 'prama-agent fleet model %s <model>', reassign with 'prama-agent bus assign', or tell the operator if it needs a manual login." \
+            "$s" "$reason" "${detail:0:160}" "$s" "$s"
+          _watch_alert "$s" "$msg" ;;
         STANDBY|DEAD)
           if [ -n "$prev" ]; then
-            _watch_log "■ $s detenido ($st)"
+            _tv msg '■ %s stopped (%s)' "$s" "$st"; _watch_log "$msg"
             bus_event stopped watchdog "$s" "$st"
-            _watch_alert "$s" "[ALERTA PRAMA] '$s' se detuvo ($st). Relánzalo con 'prama-agent fleet restart $s' o ciérralo con 'prama-agent fleet kill $s'."
+            _tv msg "[PRAMA ALERT] '%s' stopped (%s). Relaunch it with 'prama-agent fleet restart %s' or close it with 'prama-agent fleet kill %s'." \
+              "$s" "$st" "$s" "$s"
+            _watch_alert "$s" "$msg"
           fi ;;
         READY|WORKING)
           if [[ "$prev" == BLOCKED* || "$prev" == STANDBY || "$prev" == DEAD ]]; then
-            _watch_log "✔ $s recuperado ($st)"
+            _tv msg '✔ %s recovered (%s)' "$s" "$st"; _watch_log "$msg"
             bus_event recovered watchdog "$s" "$st"
-            _watch_alert "$s" "[PRAMA] '$s' se recuperó y está $st."
+            _tv msg "[PRAMA] '%s' recovered and is %s." "$s" "$st"
+            _watch_alert "$s" "$msg"
           fi ;;
       esac
       W_PREV[$s]=$key
@@ -352,9 +363,9 @@ watchdog_tick() {
       if (( W_READY[$s] >= 2 )) && (( $(queue_len "$s") > 0 )); then
         local task
         if task=$(queue_pop "$s"); then
-          [[ "$task" == \[* ]] || task="[TAREA EN COLA]: $task"
+          [[ "$task" == \[* ]] || _tv task '[QUEUED TASK]: %s' "$task"
           if tmx_send "$s" "${task//$'\n'/ }"; then
-            _watch_log "→ $s: tarea en cola entregada"
+            _tv msg '→ %s: queued task delivered' "$s"; _watch_log "$msg"
             bus_event assign watchdog "$s" "$task"
           else
             queue_push "$s" "$task"
@@ -393,16 +404,18 @@ _watch_quota_collect() {
 }
 
 _watch_quota_alerts() {
-  local key pct s reset warn=${PRAMA_QUOTA_WARN:-90} label
+  local key pct s reset warn=${PRAMA_QUOTA_WARN:-90} label msg
   for key in "${!W_QGROUP[@]}"; do
     IFS='|' read -r pct s reset <<< "${W_QGROUP[$key]}"
     if (( pct >= warn )); then
       if [ -z "${W_QALERTED[$key]:-}" ]; then
         W_QALERTED[$key]=1
         label=${key%%:*}; label=${label%/default}
-        _watch_log "◔ cuota $label ${key##*:} al $pct%"
+        _tv msg '◔ quota %s %s at %s%%' "$label" "${key##*:}" "$pct"; _watch_log "$msg"
         bus_event quota watchdog "$s" "$label ${key##*:} $pct%"
-        _watch_alert "$s" "[ALERTA PRAMA] Cuota de $label al $pct% (ventana ${key##*:}, se renueva $(_fmt_reset "$reset")). Afecta a todos los agentes $label de esta cuenta: reparte las tareas pesadas a otros agentes/modelos (p. ej. 'prama-agent fleet spawn agy <zona>' o 'prama-agent fleet model <sesión> <modelo>') antes de que se bloqueen."
+        _tv msg "[PRAMA ALERT] %s quota at %s%% (%s window, resets %s). It affects every %s agent on this account: move heavy tasks to other agents/models (e.g. 'prama-agent fleet spawn agy <zone>' or 'prama-agent fleet model <session> <model>') before they get blocked." \
+          "$label" "$pct" "${key##*:}" "$(_fmt_reset "$reset")" "$label"
+        _watch_alert "$s" "$msg"
       fi
     else
       unset 'W_QALERTED[$key]'
@@ -413,15 +426,15 @@ _watch_quota_alerts() {
 
 watchdog_loop() {
   declare -gA W_PREV=() W_READY=() W_QGROUP=() W_QALERTED=()
-  local interval=${PRAMA_WATCH_INTERVAL:-5}
+  local interval=${PRAMA_WATCH_INTERVAL:-5} msg
   [[ "$interval" =~ ^[0-9]+$ ]] && (( interval > 0 )) || interval=5
   tmx select-pane -t "=$(watchdog_session):" -T "watchdog" 2>/dev/null || true
-  _watch_log "Watchdog de la flota activo (cada ${interval}s). Ctrl+C para detenerlo."
+  _tv msg 'Fleet watchdog running (every %ss). Ctrl+C to stop it.' "$interval"; _watch_log "$msg"
   while true; do
     watchdog_tick
     # Exit when the fleet is empty for a while: the next launch starts it again.
     if [ -z "$(prama_sessions)" ]; then
-      (( ${W_IDLE:=0} >= 60 / interval )) && { _watch_log "Sin agentes; watchdog finalizado."; exit 0; }
+      (( ${W_IDLE:=0} >= 60 / interval )) && { _tv msg 'No agents left; watchdog finished.'; _watch_log "$msg"; exit 0; }
       (( W_IDLE++ ))
     else
       W_IDLE=0

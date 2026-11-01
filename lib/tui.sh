@@ -19,7 +19,7 @@
 #   tui_select_box <step> <title> <labels> <metas> <avail> <targets>
 #                                              sets CHOICE; returns 0 selected, 2 back
 #   tui_prompt <label> <varname> [default]     line input; 0 = non-empty answer
-#   tui_confirm <question> [danger] [yes_lbl]  0 = yes (s/S/y/Y)
+#   tui_confirm <question> [danger] [yes_lbl]  0 = yes (y/Y, and s/S in Spanish)
 #   tui_alert <title> <text> [err|ok|info]     modal message
 #   tui_toast <ok|err|info> <text>             transient footer message (~3 s)
 #   tui_enter_screen / tui_leave_screen, launch_fzf_cockpit, prompt_send_task_modal,
@@ -43,11 +43,12 @@ TOAST_MSG='' TOAST_KIND=info TOAST_UNTIL=0
 KEY='' MX=0 MY=0 MB=0 ZT=''
 MODAL_TOP=1 MODAL_LEFT=1 MODAL_W=0 MODAL_H=0 MODAL_HINT=''
 HUB_NS=0
-HUB_ACTIONS=(new swarm cockpit telegram doctor)
+HUB_ACTIONS=(new swarm teams cockpit telegram doctor prefs)
 declare -ga TUI_FRAME=() TUI_PREV=() TUI_ZONES=() TUI_KEYS=() TUI_KEYS_R=() HUB_ITEMS=()
 declare -ga S_NAME=() S_PID=() S_DEAD=() S_CMD=() S_ATT=() S_PATH=() S_STATE=() S_ROLE=()
 declare -ga S_CPU=() S_MEM=() S_ETIME=() S_COMM=() PV=() LP=() RP=()
-declare -gA TUI_HIT=() TUI_ROLE_CACHE=() TUI_MCACHE=() TUI_VISIBLE=()
+declare -ga S_TREE=() S_TCOLOR=() S_NMEM=()
+declare -gA TUI_HIT=() TUI_ROLE_CACHE=() TUI_MCACHE=() TUI_VISIBLE=() TUI_TLABEL=() TUI_OBJ=()
 
 # ── Styles (attribute-only fallbacks keep focus visible under NO_COLOR) ─────
 tui_styles() {
@@ -58,8 +59,7 @@ tui_styles() {
   fi
   if (( HAS_COLOR )); then
     T_SEL=$BAR_ON T_HEAD=$C_HEAD_BG
-    ui_rgb fg 254 226 226
-    T_WARN="$C_WARN_BG$UI_S"$'\e[1m'
+    T_WARN="$C_WARN_BG$C_WARN_FG"$'\e[1m'
   else
     T_SEL=$T_REV T_HEAD='' T_WARN="$T_REV$T_BOLD"
   fi
@@ -314,16 +314,16 @@ _tui_display_name() {
   UI_S=$s
 }
 
-_tui_state_es() {
+_tui_state_label() {
   case $1 in
-    WORKING) UI_S='trabaja' ;;
-    READY)   UI_S='listo' ;;
-    STANDBY) UI_S='espera' ;;
-    DAEMON)  UI_S='daemon' ;;
-    SHELL)   UI_S='shell' ;;
-    DEAD)    UI_S='caído' ;;
-    BLOCKED) UI_S='bloqueado' ;;
-    BOT)     UI_S='bot' ;;
+    WORKING) _tv UI_S 'working' ;;
+    READY)   _tv UI_S 'ready' ;;
+    STANDBY) _tv UI_S 'waiting' ;;
+    DAEMON)  _tv UI_S 'daemon' ;;
+    SHELL)   _tv UI_S 'shell' ;;
+    DEAD)    _tv UI_S 'down' ;;
+    BLOCKED) _tv UI_S 'blocked' ;;
+    BOT)     _tv UI_S 'bot' ;;
     *)       UI_S='—' ;;
   esac
 }
@@ -358,19 +358,19 @@ _tui_role_color() {
 
 _tui_role_desc() {
   case $1 in
-    coordinator) UI_S='planifica y reparte trabajo' ;;
-    reader)      UI_S='solo lectura (fuerza PLAN)' ;;
-    daemon)      UI_S='procesa la cola en bucle' ;;
-    *)           UI_S='ejecuta tareas' ;;
+    coordinator) _tv UI_S 'plans and hands out work' ;;
+    reader)      _tv UI_S 'read-only (forces PLAN)' ;;
+    daemon)      _tv UI_S 'works through its queue in a loop' ;;
+    *)           _tv UI_S 'carries out tasks' ;;
   esac
 }
 
 # _tui_perm_label <mode> → UI_S (label) UI_C (color) UI_D (description)
 _tui_perm_label() {
   case $1 in
-    yolo) UI_S='▲ YOLO' UI_C="$C_ERR$T_BOLD" UI_D='sin pedir confirmación' ;;
-    plan) UI_S='◉ PLAN' UI_C=$C_NEON UI_D='solo lectura / planificación' ;;
-    *)    UI_S='● ASK'  UI_C=$C_LIVE UI_D='confirma cada acción' ;;
+    yolo) UI_S='▲ YOLO' UI_C="$C_ERR$T_BOLD"; _tv UI_D 'never asks for confirmation' ;;
+    plan) UI_S='◉ PLAN' UI_C=$C_NEON; _tv UI_D 'read-only / planning' ;;
+    *)    UI_S='● ASK'  UI_C=$C_LIVE; _tv UI_D 'confirms every action' ;;
   esac
 }
 
@@ -381,20 +381,28 @@ _tui_mem_fmt() {
   else UI_S="${m}M"; fi
 }
 
-_tui_menu_key_label() {
-  local k=${PRAMA_MENU_KEY:-M-m}
+_tui_menu_key_label() { _tui_key_label "${PRAMA_MENU_KEY:-M-m}"; }
+
+# _tui_key_label <tmux key> → UI_S readable (M-a → Alt+a, C-b → Ctrl+b)
+_tui_key_label() {
+  local k=$1
   k=${k//M-/Alt+}; k=${k//C-/Ctrl+}
   UI_S=$k
 }
 
-# _tui_keycap <key> <label> → KC (ansi) KCW (width)
+# _tui_keycap <key> <label> [danger] → KC (ansi) KCW (width). Destructive keys get the error color.
 _tui_keycap() {
-  ui_width "$1"; local kw=$UI_W
+  ui_width "$1"; local kw=$UI_W lc=$C_MUTED
+  [ -n "${3:-}" ] && lc=$C_ERR
   ui_width "$2"
-  if (( HAS_COLOR )); then KC="$KEY_BADGE $1 $T_OFF $C_MUTED$2$T_OFF"
+  if (( HAS_COLOR )); then KC="$KEY_BADGE $1 $T_OFF $lc$2$T_OFF"
   else KC="[$1] $2"; fi
   KCW=$(( kw + 3 + UI_W ))
 }
+
+# Keybar builders: _tk <key> <msgid> [token] [danger] (left) · _tkr <key> <msgid> [token] (right).
+_tk()  { local l; _tv l "$2"; TUI_KEYS+=("$1|$l|${3:-}|${4:-}"); }
+_tkr() { local l; _tv l "$2"; TUI_KEYS_R+=("$1|$l|${3:-}"); }
 
 tui_toast() {
   TOAST_KIND=${1:-info} TOAST_MSG=${2:-}
@@ -407,7 +415,8 @@ _tui_header() {
   local row=$1 tc=$TUI_TC H=$T_HEAD brand=${PRAMA_BRAND:-PRAMA AGENT} ver="v${VERSION:-?}"
   [ "$TUI_MODE" = compact ] && brand=${brand%% *}
   local host=${HOSTNAME:-}; host=${host%%.*}
-  ui_gradient "$brand" 56 189 248 192 132 252; local gb=$UI_S
+  # shellcheck disable=SC2086  # UI_GRAD holds the six gradient components
+  ui_gradient "$brand" ${UI_GRAD:-56 189 248 192 132 252}; local gb=$UI_S
   ui_width "$brand"; local lw=$(( 4 + UI_W + 1 + ${#ver} ))
   local hostp=''
   [ "$TUI_MODE" != compact ] && [ -n "$host" ] && hostp="  $host"
@@ -415,8 +424,8 @@ _tui_header() {
   if (( n > 0 )); then
     if [ "$TUI_MODE" = compact ]; then counts="● $n"
     else
-      counts="● $n activos"
-      (( TUI_NWORK > 0 )) && counts+=" · $TUI_NWORK trabajando"
+      _tv counts '● %d active' "$n"
+      if (( TUI_NWORK > 0 )); then local wk; _tv wk ' · %d working' "$TUI_NWORK"; counts+=$wk; fi
     fi
     ui_width "$counts"; cw=$(( UI_W + 3 ))
   fi
@@ -448,19 +457,24 @@ _tui_settings_line() {
   _tui_role_icon "$ROLE"; local rl="$UI_S $ROLE"
   _tui_role_color "$ROLE"; local rc=$UI_C
   local rem=off; (( REMOTE )) && rem=on
-  local wt=${WORKTREE:-—} bgl=abrir
-  (( BG )) && bgl='segundo plano'
+  local wt=${WORKTREE:-—} bgl
+  if (( BG )); then _tv bgl 'background'; else _tv bgl 'open'; fi
   if [ "$TUI_MODE" = compact ]; then
     local s=" $rc$rl$T_OFF $C_MUTED·$T_OFF $pc$pl$T_OFF $C_MUTED·$T_OFF $PROFILE"
     [ -n "$WORKTREE" ] && s+=" $C_MUTED·$T_OFF $C_PURP⎇ $WORKTREE$T_OFF"
-    (( BG )) && s+=" $C_MUTED· fondo$T_OFF"
+    (( BG )) && s+=" $C_MUTED· $bgl$T_OFF"
     _tui_crumbs_line "$row" "${s# }"
     return
   fi
-  local -a chips=("o|Rol|$rl|$rc" "y|Permisos|$pl|$pc" "e|Remoto|$rem|$C_TEXT" "p|Perfil|$PROFILE|$C_TEXT"
-                  "w|Worktree|$wt|$C_PURP" "g|Al lanzar|$bgl|$C_TEXT")
+  local n_role n_perm n_rem n_prof n_bg next
+  _tv n_role 'Role'; _tv n_perm 'Permissions'; _tv n_rem 'Remote'; _tv n_prof 'Profile'; _tv n_bg 'On launch'
+  local -a chips=("o|$n_role|$rl|$rc" "y|$n_perm|$pl|$pc" "e|$n_rem|$rem|$C_TEXT" "p|$n_prof|$PROFILE|$C_TEXT"
+                  "w|Worktree|$wt|$C_PURP" "g|$n_bg|$bgl|$C_TEXT")
   local out=' ' used=1 chip k n v c cw
-  if [ "$TUI_MODE" = wide ]; then out+="${C_MUTED}Próximo agente ›$T_OFF "; used=$(( used + 17 )); fi
+  if [ "$TUI_MODE" = wide ]; then
+    _tv next 'Next agent ›'; ui_width "$next"
+    out+="$C_MUTED$next$T_OFF "; used=$(( used + UI_W + 1 ))
+  fi
   for chip in "${chips[@]}"; do
     k=${chip%%|*}; chip=${chip#*|}; n=${chip%%|*}; chip=${chip#*|}; v=${chip%%|*}; c=${chip#*|}
     ui_width "$n $v"; cw=$(( UI_W + 6 ))
@@ -479,7 +493,7 @@ _tui_footer() {
   local row=$1 tc=$TUI_TC out=' ' used=1 item k l t rout='' rw=0
   local -a rz=()
   for item in "${TUI_KEYS_R[@]}"; do
-    k=${item%%|*}; item=${item#*|}; l=${item%%|*}; t=${item#*|}
+    k=${item%%|*}; item=${item#*|}; l=${item%%|*}; t=${item#*|}; t=${t%%|*}
     _tui_keycap "$k" "$l"
     rz+=("$rw $KCW $t")
     rout+="$KC "; rw=$(( rw + KCW + 1 ))
@@ -496,9 +510,11 @@ _tui_footer() {
     ui_trunc "$TOAST_MSG" $(( tc - rw - 4 ))
     out=" $col$T_BOLD$ic $UI_S$T_OFF"; used=$(( 3 + UI_W ))
   else
+    local dz
     for item in "${TUI_KEYS[@]}"; do
-      k=${item%%|*}; item=${item#*|}; l=${item%%|*}; t=${item#*|}
-      _tui_keycap "$k" "$l"
+      k=${item%%|*}; item=${item#*|}; l=${item%%|*}; item=${item#*|}; t=${item%%|*}; dz=''
+      [[ $item == *'|'* ]] && dz=${item#*|}
+      _tui_keycap "$k" "$l" "$dz"
       (( used + KCW + 1 + rw > tc )) && break
       [ -n "$t" ] && TUI_ZONES+=("$row $(( used + 1 )) $(( used + KCW )) $t")
       out+="$KC "; used=$(( used + KCW + 1 ))
@@ -517,7 +533,8 @@ _tui_footer() {
 }
 
 _tui_too_small() {
-  local r msg="Ventana muy pequeña"
+  local r msg
+  _tv msg 'Window too small'
   for ((r = 1; r <= TUI_TR; r++)); do TUI_FRAME[r]=''; done
   ui_fit "$msg" "$TUI_TC"
   TUI_FRAME[$(( (TUI_TR + 1) / 2 ))]="$C_BRASS$UI_S$T_OFF"
@@ -580,7 +597,8 @@ tui_alert() {
   local max=$(( TUI_TR - 5 ))
   (( max < 1 )) && max=1
   (( ${#lines[@]} > max )) && lines=("${lines[@]: -max}")
-  lines+=("" "$KEY_BADGE ↵ $T_OFF ${C_MUTED}cerrar$T_OFF")
+  local cl; _tv cl 'close'
+  lines+=("" "$KEY_BADGE ↵ $T_OFF $C_MUTED$cl$T_OFF")
   local ic='●'
   [ "$kind" = err ] && ic='✖'
   [ "$kind" = ok ] && ic='✔'
@@ -599,9 +617,12 @@ tui_alert() {
 
 # tui_confirm <question> [danger:0|1] [yes_label] → 0 when the user answers yes
 tui_confirm() {
-  local q=$1 danger=${2:-0} yes=${3:-Sí} ans=''
+  local q=$1 danger=${2:-0} yes=${3:-} ans='' yk=y no
+  [ "$PRAMA_UI_LANG" = es ] && yk=s
+  [ -n "$yes" ] || _tv yes 'Yes'
+  _tv no 'No'
   if (( ! TUI_ACTIVE )); then
-    printf ' %s [s/N] ' "$q" >&2
+    printf ' %s [%s/N] ' "$q" "$yk" >&2
     IFS= read -r ans || return 1
     [[ $ans == [sSyY]* ]]
     return
@@ -611,14 +632,15 @@ tui_confirm() {
   local w=$(( TUI_TC > 64 ? 60 : TUI_TC - 2 ))
   _tui_wrap "$q" $(( w - 4 ))
   local -a lines=("${WRAP[@]}" "")
-  _tui_keycap s "$yes"; local yw=$KCW
+  _tui_keycap "$yk" "$yes"; local yw=$KCW
   local btn
-  if (( HAS_COLOR )); then btn="$KEY_BADGE s $T_OFF $yc$yes$T_OFF     $KEY_BADGE N $T_OFF ${C_MUTED}No$T_OFF"
-  else btn="[s] $yes     [N] No"; fi
+  if (( HAS_COLOR )); then btn="$KEY_BADGE $yk $T_OFF $yc$yes$T_OFF     $KEY_BADGE N $T_OFF $C_MUTED$no$T_OFF"
+  else btn="[$yk] $yes     [N] $no"; fi
   lines+=("$btn")
-  MODAL_HINT='esc cancela'
-  local title='Confirmar'
-  (( danger )) && title='▲ Confirmar'
+  _tv MODAL_HINT 'esc cancels'
+  local title
+  _tv title 'Confirm'
+  (( danger )) && title="▲ $title"
   _tui_modal "$bc" "$title" "$w" "${lines[@]}"
   MODAL_HINT=''
   local brow=$(( MODAL_TOP + ${#lines[@]} )) bcol=$(( MODAL_LEFT + 2 )) rc=1
@@ -657,7 +679,8 @@ tui_prompt() {
     return
   fi
   local w=$(( TUI_TC > 76 ? 72 : TUI_TC ))
-  local -a lines=("" "" "${C_MUTED}↵ confirmar · ↵ vacío cancela$T_OFF")
+  local ph; _tv ph '↵ confirm · empty ↵ cancels'
+  local -a lines=("" "" "$C_MUTED$ph$T_OFF")
   MODAL_HINT=''
   _tui_modal "$C_NEON" "$_p_label" "$w" "${lines[@]}"
   local row=$(( MODAL_TOP + 2 )) lead prompt
@@ -680,68 +703,125 @@ tui_prompt() {
   [ -n "$_p_val" ]
 }
 
+# Keyboard help: sections of "keys|description" (built with _hs / _hk), two columns when the modal
+# is wide enough, scrollable with ↑↓ when it does not fit (phones).
+_hs() { local l; _tv l "$1"; HE+=("#$l"); }
+_hk() { local l; _tv l "$2"; HE+=("$1|$l"); }
+
+_tui_help_entries() {
+  local mk nk ck
+  _tui_menu_key_label; mk=$UI_S
+  _tui_key_label "$PRAMA_NAV_KEY"; nk=$UI_S
+  _tui_key_label "$PRAMA_COCKPIT_KEY"; ck=$UI_S
+  HE=()
+  _hs 'MOVE AROUND'
+  _hk '↑↓ j k' 'move'
+  _hk '↵ →' 'open / enter'
+  _hk 'esc ←' 'back'
+  _hk '/' 'filter the list'
+  _hk '1-9' 'jump to an item'
+  _hk 'q' 'quit (agents keep running)'
+  _hs 'SELECTED AGENT'
+  _hk 't' 'send it a task'
+  _hk 'l' 'full logs'
+  _hk 'c' 'its team cockpit'
+  _hk 'r' 'restart (same conversation)'
+  _hk 'x' 'close (asks first)'
+  _hk 'f' 'fzf inspector'
+  _hs 'TEAMS'
+  _hk 's' 'new team'
+  _hk 'm' 'manage teams'
+  _hk '+' 'add agents to its team'
+  _hk 'x' 'on a coordinator: close the team'
+  _hs 'NEXT AGENT'
+  _hk 'n' 'new agent'
+  _hk 'o · y' 'role · permissions'
+  _hk 'e · p' 'remote · LLM profile'
+  _hk 'w · g' 'worktree · open or background'
+  _hs 'INSIDE AN AGENT OR THE COCKPIT'
+  _hk "$mk" 'back to this menu (◂ MENU)'
+  _hk "$nk" 'agent list (☰)'
+  _hk "$ck" 'team cockpit ⇄ agent (▦)'
+  _hk 'Ctrl+b n/p' 'next / previous agent'
+  _hk 'Ctrl+b z' 'zoom the focused pane'
+  _hs 'MORE'
+  _hk ',' 'preferences: language, theme'
+  _hk '?' 'this help'
+  _hk '⊙' 'tap: select · tap again: open'
+}
+
+# _tui_help_lines <w> → HL (ansi lines for a modal of width <w>)
+_tui_help_lines() {
+  local w=$1 e k d kw=4 cols=1 colw left='' n=0 K="$C_NEON$T_BOLD" O=$T_OFF
+  HL=()
+  (( w >= 76 )) && cols=2
+  colw=$(( (w - 4) / cols ))
+  for e in "${HE[@]}"; do
+    [[ $e == '#'* ]] && continue
+    ui_width "${e%%|*}"; (( UI_W + 1 > kw )) && kw=$(( UI_W + 1 ))
+  done
+  for e in "${HE[@]}" '#'; do
+    if [[ $e == '#'* ]]; then
+      [ -n "$left" ] && HL+=("$left")
+      left='' n=0
+      [ "$e" = '#' ] && break
+      (( ${#HL[@]} )) && HL+=("")
+      HL+=("$C_MUTED$T_BOLD${e#\#}$O")
+      continue
+    fi
+    k=${e%%|*} d=${e#*|}
+    ui_fit "$k" "$kw"; k=$UI_S
+    ui_fit "$d" $(( colw - kw - 2 )); d=$UI_S
+    if (( cols == 1 )); then HL+=(" $K$k$O $d"); continue; fi
+    if (( n % 2 == 0 )); then left=" $K$k$O $d"
+    else HL+=("$left $K$k$O $d"); left=''; fi
+    n=$(( n + 1 ))
+  done
+}
+
 _tui_help() {
-  _tui_menu_key_label; local mk=$UI_S
-  local K="$C_NEON$T_BOLD" O=$T_OFF M="$C_MUTED$T_BOLD"
-  local -a L
-  if (( TUI_TC >= 60 )); then
-    L=(
-      "${M}NAVEGACIÓN$O"
-      "  ${K}↑ ↓  j k$O   mover              ${K}↵$O         entrar / abrir"
-      "  ${K}/$O          filtrar sesiones   ${K}esc ← ⌫$O   volver"
-      "  ${K}1-9$O        ir al elemento     ${K}?$O         esta ayuda"
-      ""
-      "${M}SESIÓN SELECCIONADA$O"
-      "  ${K}t$O  enviar tarea               ${K}l$O  logs completos"
-      "  ${K}r$O  reiniciar                  ${K}x$O  cerrar (confirma)"
-      "  ${K}c$O  cockpit de su zona         ${K}f$O  inspector fzf"
-      ""
-      "${M}AJUSTES DEL PRÓXIMO AGENTE$O"
-      "  ${K}o$O rol   ${K}y$O permisos   ${K}e$O remoto   ${K}p$O perfil LLM"
-      "  ${K}w$O worktree   ${K}g$O abrir al lanzar / segundo plano"
-      ""
-      "${M}GLOBAL$O"
-      "  ${K}n$O  nuevo agente   ${K}s$O  nuevo equipo   ${K}q$O  salir"
-      "  toque o clic: selecciona · segundo toque: abre"
-      ""
-      "${M}DENTRO DE UN AGENTE O DEL COCKPIT$O (el agente sigue)"
-      "  ${K}$mk$O  volver a este menú          (botón «◂ MENU»)"
-      "  ${K}$PRAMA_NAV_KEY$O  lista de agentes, ir a otro  («☰ AGENTES»)"
-      "  ${K}$PRAMA_COCKPIT_KEY$O  cockpit del equipo ⇄ agente  («▦ COCKPIT»)"
-      "  ${K}Ctrl+b n/p$O siguiente/anterior · ${K}Ctrl+b z$O agrandar panel"
-    )
-  else
-    L=(
-      "${M}MOVER$O  ${K}↑↓$O ${K}jk$O · ${K}↵$O abrir · ${K}esc$O volver"
-      "       ${K}/$O filtrar · ${K}1-9$O ir"
-      "${M}SESIÓN$O ${K}t$O tarea · ${K}l$O logs · ${K}r$O reinicia"
-      "       ${K}x$O cerrar · ${K}c$O cockpit · ${K}f$O fzf"
-      "${M}AJUSTE$O ${K}o$O rol · ${K}y$O permisos · ${K}e$O remoto"
-      "       ${K}p$O perfil · ${K}w$O worktree · ${K}g$O fondo"
-      "${M}GLOBAL$O ${K}n$O nuevo · ${K}s$O equipo · ${K}q$O salir"
-      "       toque = elegir · 2º toque = abrir"
-      ""
-      "${M}EN UN AGENTE$O ${K}$mk$O menú · ${K}$PRAMA_NAV_KEY$O agentes"
-      "       ${K}$PRAMA_COCKPIT_KEY$O cockpit ⇄ agente"
-    )
-  fi
-  local w=68
-  (( TUI_TC < 70 )) && w=$TUI_TC
-  MODAL_HINT='cualquier tecla cierra'
-  _tui_modal "$C_NEON" "Atajos de teclado" "$w" "${L[@]}"
-  MODAL_HINT=''
+  local w off=0 max=3 title hint redraw=1
+  _tui_help_entries
+  _tv title 'Keyboard shortcuts'
   while :; do
+    if (( redraw )); then
+      redraw=0 w=96
+      (( w > TUI_TC )) && w=$TUI_TC
+      _tui_help_lines "$w"
+      max=$(( TUI_TR - 2 ))
+      (( max < 3 )) && max=3
+      if (( ${#HL[@]} > max )); then
+        (( off > ${#HL[@]} - max )) && off=$(( ${#HL[@]} - max ))
+        _tv hint '↑↓ scroll · any other key closes'
+        MODAL_HINT=$hint
+        _tui_modal "$C_NEON" "$title" "$w" "${HL[@]:off:max}"
+      else
+        off=0
+        _tv MODAL_HINT 'any key closes'
+        _tui_modal "$C_NEON" "$title" "$w" "${HL[@]}"
+      fi
+      MODAL_HINT=''
+    fi
     tui_read_key 1
     case $KEY in
       TIMEOUT|NONE)
-        if (( TUI_RESIZED )); then
-          TUI_RESIZED=0; tui_measure; tui_invalidate
-          (( TUI_TC < 70 )) && w=$TUI_TC
-          MODAL_HINT='cualquier tecla cierra'; _tui_modal "$C_NEON" "Atajos de teclado" "$w" "${L[@]}"; MODAL_HINT=''
-        fi ;;
-      MOUSE) (( MB == 0 )) && break ;;
+        if (( TUI_RESIZED )); then TUI_RESIZED=0; tui_measure; tui_invalidate; redraw=1; fi
+        continue ;;
+      UP|k) off=$(( off - 1 )) ;;
+      DOWN|j) off=$(( off + 1 )) ;;
+      PGUP) off=$(( off - max )) ;;
+      PGDN|SPACE) off=$(( off + max )) ;;
+      MOUSE)
+        case $MB in
+          64) off=$(( off - 2 )) ;;
+          65) off=$(( off + 2 )) ;;
+          0) break ;;
+          *) continue ;;
+        esac ;;
       *) break ;;
     esac
+    (( off < 0 )) && off=0
+    redraw=1
   done
   tui_invalidate
 }
@@ -861,7 +941,31 @@ tui_collect() {
     S_STATE[i]=$st S_CPU[i]=$cpu S_MEM[i]=$mem S_ETIME[i]=$etime S_COMM[i]=$comm
     [ "$st" = WORKING ] && TUI_NWORK=$(( TUI_NWORK + 1 ))
   done
+  _tui_team_tree
   TUI_HOST=$(host_stats_label)
+}
+
+# Team layout of the session list: S_TREE (T = coordinator, ├ / └ = its agents, '' = alone),
+# S_TCOLOR (a color per team, so neighbouring teams never look alike) and S_NMEM (agents per team).
+TUI_TEAM_COLORS=()
+_tui_team_tree() {
+  local n=${#S_NAME[@]} i j t=-1 c
+  TUI_TEAM_COLORS=("$C_NEON" "$C_PURP" "$C_LIVE" "$C_BRASS" "$C_INDIGO")
+  S_TREE=() S_TCOLOR=() S_NMEM=() TUI_NTEAMS=0
+  for ((i = 0; i < n; i++)); do S_TREE[i]='' S_TCOLOR[i]='' S_NMEM[i]=0; done
+  for ((i = 0; i < n; i++)); do
+    if [ "${S_DEPTH[i]:-0}" = 0 ] && [ "${S_ROLE[i]}" = coordinator ]; then
+      t=$(( t + 1 )); c=${TUI_TEAM_COLORS[t % ${#TUI_TEAM_COLORS[@]}]}
+      S_TREE[i]=T S_TCOLOR[i]=$c
+      for ((j = i + 1; j < n; j++)); do
+        [ "${S_DEPTH[j]:-0}" = 1 ] || break
+        S_TREE[j]='├' S_TCOLOR[j]=$c
+      done
+      S_NMEM[i]=$(( j - i - 1 )) TUI_NTEAMS=$(( t + 1 ))
+      (( j > i + 1 )) && S_TREE[j-1]='└'
+      [ -n "${TUI_TLABEL[${S_NAME[i]}]+x}" ] || TUI_TLABEL[${S_NAME[i]}]=$(team_label "${S_NAME[i]}")
+    fi
+  done
 }
 
 # _tui_preview <session> <lines> <width> → PV: exactly <lines> rows, ANSI kept, fitted to <width>.
@@ -881,7 +985,7 @@ _tui_preview() {
     end=$(( end - 1 ))
   done
   if (( end == 0 )); then
-    ui_fit "(sin salida todavía)" "$w"; PV+=("$C_MUTED$UI_S$T_OFF")
+    _tv UI_S '(no output yet)'; ui_fit "$UI_S" "$w"; PV+=("$C_MUTED$UI_S$T_OFF")
   else
     start=$(( end - h )); (( start < 0 )) && start=0
     for ((i = start; i < end; i++)); do ui_ansi_fit "${raw[i]}" "$w"; PV+=("$UI_S"); done
@@ -902,7 +1006,8 @@ _tui_preview_box() {
   _tb_top "$w" "$title" "$T_BOLD$C_TEXT" "$right" "$bc"; RP+=("$TB")
   if (( nm )); then
     for line in "${@:1:nm}"; do _tb_line "$w" "$bc" "$line"; RP+=("$TB"); done
-    _tb_sep "$w" "$bc" "en vivo"; RP+=("$TB")
+    local lv; _tv lv 'live'
+    _tb_sep "$w" "$bc" "$lv"; RP+=("$TB")
   fi
   _tui_preview "$s" "$ph" "$cw"
   for line in "${PV[@]}"; do RP+=("$bc│$T_OFF $line $bc│$T_OFF"); done
@@ -964,7 +1069,7 @@ _tui_hub_cols() {
   [ "$TUI_MODE" = wide ] && cpu_min=14
   HC_ROLE=0 HC_STATE=0 HC_CPU=0 HC_MEM=0
   (( avail - 8 >= min ))      && { HC_ROLE=7;  avail=$(( avail - 8 )); }
-  (( avail - 8 >= min ))      && { HC_STATE=7; avail=$(( avail - 8 )); }
+  (( avail - 10 >= min ))     && { HC_STATE=9; avail=$(( avail - 10 )); }
   (( avail - 10 >= cpu_min )) && { HC_CPU=9;   avail=$(( avail - 10 )); }
   (( avail - 6 >= 20 ))       && { HC_MEM=5;   avail=$(( avail - 6 )); }
   HC_NAME=$avail
@@ -976,18 +1081,34 @@ _tui_srow() {
   if (( sel )); then base=$T_SEL; mark='▸'; fi
   R=$T_OFF$base
   st=${S_STATE[i]}; state_color "$st"; sc=$UI_S
-  _tui_display_name "${S_NAME[i]}"
-  if (( ${S_DEPTH[i]:-0} )); then ui_fit "└ $UI_S" "$HC_NAME"; else ui_fit "$UI_S" "$HC_NAME"; fi
-  name=$UI_S
   nc=$C_TEXT
   [ "$st" = DEAD ] && nc=$C_MUTED
   (( sel )) && nc=$T_BOLD
-  SR="$base $C_NEON$mark$R $sc●$R $nc$name$R"
-  if (( HC_ROLE )); then
+  local tr=${S_TREE[i]:-} tc=${S_TCOLOR[i]:-} lead=''
+  case $tr in
+    T)  # Coordinator row = the team: "▍zone · team  (n)" in the team's color.
+        local lbl=${TUI_TLABEL[${S_NAME[i]}]:-} cnt=''
+        [ -n "$lbl" ] || { _tui_display_name "${S_NAME[i]}"; lbl=$UI_S; }
+        (( ${S_NMEM[i]:-0} )) && cnt=" (${S_NMEM[i]})"
+        # The team label also takes the role column: the ▍ bar already says "coordinator".
+        ui_fit "$lbl$cnt" $(( HC_NAME - 2 + (HC_ROLE ? HC_ROLE + 1 : 0) )); name=$UI_S
+        lead="$tc▍$R "; nc="$tc$T_BOLD" ;;
+    ├|└)
+        _tui_display_name "${S_NAME[i]}"
+        local coord short=$UI_S j
+        for ((j = i - 1; j >= 0; j--)); do [ "${S_TREE[j]}" = T ] && { coord=${S_NAME[j]}; break; }; done
+        # Agents named after their team (prama-<zone>-<team>-agy) show only the last part.
+        [ -n "${coord:-}" ] && [[ ${S_NAME[i]} == "${coord%-coord}-"* ]] && short=${S_NAME[i]#"${coord%-coord}-"}
+        ui_fit "$short" $(( HC_NAME - 2 )); name=$UI_S
+        lead="$tc$tr$R " ;;
+    *)  _tui_display_name "${S_NAME[i]}"; ui_fit "$UI_S" "$HC_NAME"; name=$UI_S ;;
+  esac
+  SR="$base $C_NEON$mark$R $sc●$R $lead$nc$name$R"
+  if (( HC_ROLE )) && [ "$tr" != T ]; then
     _tui_role_short "${S_ROLE[i]}"; ui_fit "$UI_S" 7; _tui_role_color "${S_ROLE[i]}"
     SR+=" $UI_C$UI_S$R"
   fi
-  if (( HC_STATE )); then _tui_state_es "$st"; ui_fit "$UI_S" 7; SR+=" $sc$UI_S$R"; fi
+  if (( HC_STATE )); then _tui_state_label "$st"; ui_fit "$UI_S" 9; SR+=" $sc$UI_S$R"; fi
   if (( HC_CPU )); then
     local c=${S_CPU[i]%.*} gc=$C_LIVE pct
     [[ $c =~ ^[0-9]+$ ]] || c=0
@@ -1005,13 +1126,16 @@ _tui_srow() {
 
 _tui_action_meta() {
   case $1 in
-    new)      A_ICON='✚' A_LABEL='Nuevo agente'       A_DESC="${AGENTS[*]} en una zona" ;;
-    swarm)    A_ICON='❖' A_LABEL='Nuevo equipo'       A_DESC='coordinador + N agentes en una zona' ;;
-    cockpit)  A_ICON='▦' A_LABEL='Cockpit'            A_DESC='ver un equipo en vivo, pantalla dividida' ;;
-    telegram) A_ICON='➤' A_LABEL='Telegram'           A_DESC='bot 24/7: controla todo desde el móvil'
-              (( TUI_TG_RUNNING )) && A_DESC='bot activo · control desde el móvil' ;;
-    doctor)   A_ICON='✱' A_LABEL='Doctor'             A_DESC='diagnóstico y reparación del servidor'
-              (( TUI_FEEDBACK > 0 )) && A_DESC="$TUI_FEEDBACK reporte(s) de fallos de agentes sin revisar" ;;
+    new)      A_ICON='✚'; _tv A_LABEL 'New agent'; _tv A_DESC '%s in a zone' "${AGENTS[*]}" ;;
+    swarm)    A_ICON='❖'; _tv A_LABEL 'New team'; _tv A_DESC 'coordinator + N agents in a zone' ;;
+    teams)    A_ICON='☷'; _tv A_LABEL 'Teams'; _tv A_DESC 'manage teams: cockpit, message, add agents, close'
+              (( TUI_NTEAMS > 0 )) && _tv A_DESC '%d team(s) running · manage, message, grow, close' "$TUI_NTEAMS" ;;
+    cockpit)  A_ICON='▦'; A_LABEL='Cockpit'; _tv A_DESC 'watch a team live, split screen' ;;
+    telegram) A_ICON='➤'; A_LABEL='Telegram'; _tv A_DESC '24/7 bot: control everything from your phone'
+              (( TUI_TG_RUNNING )) && _tv A_DESC 'bot running · control from your phone' ;;
+    doctor)   A_ICON='✱'; A_LABEL='Doctor'; _tv A_DESC 'server diagnosis and repair'
+              (( TUI_FEEDBACK > 0 )) && _tv A_DESC '%d unreviewed bug report(s) from agents' "$TUI_FEEDBACK" ;;
+    prefs)    A_ICON='⚙'; _tv A_LABEL 'Preferences'; _tv A_DESC 'language %s · theme %s' "$PRAMA_LANG_NAME" "$UI_THEME" ;;
   esac
 }
 
@@ -1037,15 +1161,17 @@ _tui_arow() {
 _tui_empty_lines() {
   local vh=$1 cw=$2 line lw left r
   local -a msg
+  local t1 t2 t3
   if [ -n "$TUI_FILTER" ]; then
-    msg=("$C_MUTED○$T_OFF  ${T_BOLD}Sin coincidencias para «$TUI_FILTER»$T_OFF" "" "${C_MUTED}esc limpia el filtro$T_OFF")
+    _tv t1 'No matches for "%s"' "$TUI_FILTER"; _tv t2 'esc clears the filter'
+    msg=("$C_MUTED○$T_OFF  $T_BOLD$t1$T_OFF" "" "$C_MUTED$t2$T_OFF")
   else
     local kb="$KEY_BADGE n $T_OFF" ks="$KEY_BADGE s $T_OFF"
     (( HAS_COLOR )) || { kb='[n]'; ks='[s]'; }
-    msg=("$C_MUTED○$T_OFF  ${T_BOLD}Sin agentes activos$T_OFF" ""
-         "$kb un agente  ·  $ks un equipo"
-         "${C_MUTED}Siguen vivos aunque cierres la terminal$T_OFF")
-    (( ZONES_DISCOVERED )) && msg+=("" "${C_MUTED}Primera vez: ${T_OFF}prama-agent setup")
+    _tv t1 'No agents running'; _tv t2 '%s an agent  ·  %s a team' "$kb" "$ks"
+    _tv t3 'They keep running even if you close the terminal'
+    msg=("$C_MUTED○$T_OFF  $T_BOLD$t1$T_OFF" "" "$t2" "$C_MUTED$t3$T_OFF")
+    if (( ZONES_DISCOVERED )); then _tv t1 'First time:'; msg+=("" "$C_MUTED$t1 ${T_OFF}prama-agent setup"); fi
   fi
   if (( vh < ${#msg[@]} )); then
     local -a keep=()
@@ -1078,12 +1204,13 @@ _tui_hub_list_panel() {
   fi
   (( TUI_SCROLL > ns - vh )) && TUI_SCROLL=$(( ns - vh ))
   (( TUI_SCROLL < 0 )) && TUI_SCROLL=0
-  local right
+  local right title
   if (( TUI_FILTER_EDIT )); then right="/$TUI_FILTER▏"
-  elif [ -n "$TUI_FILTER" ]; then right="/$TUI_FILTER · $ns de ${#S_NAME[@]}"
-  elif (( ns > vh )); then right="$(( TUI_SCROLL + 1 ))-$(( TUI_SCROLL + vh )) de $ns"
+  elif [ -n "$TUI_FILTER" ]; then _tv right '/%s · %d of %d' "$TUI_FILTER" "$ns" "${#S_NAME[@]}"
+  elif (( ns > vh )); then _tv right '%d-%d of %d' $(( TUI_SCROLL + 1 )) $(( TUI_SCROLL + vh )) "$ns"
   else right=$ns; fi
-  _tb_top "$w" "Sesiones" "$T_BOLD$C_NEON" "$right" "$bc"; LP+=("$TB")
+  _tv title 'Agents and teams'
+  _tb_top "$w" "$title" "$T_BOLD$C_NEON" "$right" "$bc"; LP+=("$TB")
   _tui_hub_cols "$cw"
   TUI_VISIBLE=()
   if (( ns == 0 )); then
@@ -1102,7 +1229,8 @@ _tui_hub_list_panel() {
       LP+=("$bc│$T_OFF$SR$bc│$T_OFF")
     done
   fi
-  _tb_sep "$w" "$bc" "Acciones"; LP+=("$TB")
+  _tv title 'Actions'
+  _tb_sep "$w" "$bc" "$title"; LP+=("$TB")
   for ((r = 0; r < na; r++)); do
     j=$(( ns + r ))
     _tui_arow "${HUB_ACTIONS[r]}" $(( j == TUI_SEL )) "$cw"
@@ -1110,62 +1238,100 @@ _tui_hub_list_panel() {
     LP+=("$bc│$T_OFF$SR$bc│$T_OFF")
   done
   local hint=''
-  (( ns > TUI_SCROLL + vh )) && hint="▼ $(( ns - TUI_SCROLL - vh )) más"
+  (( ns > TUI_SCROLL + vh )) && _tv hint '▼ %d more' $(( ns - TUI_SCROLL - vh ))
   _tb_bot "$w" "$bc" "$hint"; LP+=("$TB")
 }
 
 # Body text for the selected hub action → BODY (ansi lines, wrapped to <cw>)
 _tui_action_body() {
-  local id=$1 cw=$2 p K="$C_NEON$T_BOLD" O=$T_OFF M=$C_MUTED
+  local id=$1 cw=$2 p K="$C_NEON$T_BOLD" O=$T_OFF M=$C_MUTED t
   BODY=()
   _tui_para() { _tui_wrap "$1" "$cw"; BODY+=("${WRAP[@]}"); }
+  # _tui_bul <key-or-•> <msgid> [args] — one bullet line
+  _tui_bul() { _tv t "$2" "${@:3}"; BODY+=("  $K$1$O  $t"); }
   case $id in
     new)
-      _tui_para "Lanza un agente de código dentro de tmux, en una de tus zonas (repositorios git). Sigue vivo aunque se caiga el SSH."
-      BODY+=("" "${M}Ajustes del próximo agente:$O")
+      _tv t 'Launches a coding agent inside tmux, in one of your zones (git repositories). It keeps running if SSH drops.'; _tui_para "$t"
+      _tv t 'Settings for the next agent:'; BODY+=("" "$M$t$O")
+      local n_role n_perm n_rem n_prof n_bg
+      _tv n_role 'Role'; _tv n_perm 'Permissions'; _tv n_rem 'Remote'; _tv n_prof 'Profile'; _tv n_bg 'On launch'
       _tui_perm_label "$PERM_MODE"; local pl="$UI_C$UI_S$O $M— $UI_D$O"
       _tui_role_icon "$ROLE"; local ri=$UI_S
       _tui_role_color "$ROLE"
-      BODY+=("  ${K}o$O  Rol        $UI_C$ri $ROLE$O")
-      BODY+=("  ${K}y$O  Permisos   $pl")
+      ui_fit "$n_role" 12; BODY+=("  ${K}o$O  $UI_S $UI_C$ri $ROLE$O")
+      ui_fit "$n_perm" 12; BODY+=("  ${K}y$O  $UI_S $pl")
       local rem=off; (( REMOTE )) && rem=on
-      BODY+=("  ${K}e$O  Remoto     $rem")
-      BODY+=("  ${K}p$O  Perfil     $PROFILE")
-      BODY+=("  ${K}w$O  Worktree   ${WORKTREE:-—}")
-      if (( BG )); then BODY+=("  ${K}g$O  Al lanzar  segundo plano")
-      else BODY+=("  ${K}g$O  Al lanzar  abrir y volver aquí al salir"); fi
+      ui_fit "$n_rem" 12; BODY+=("  ${K}e$O  $UI_S $rem")
+      ui_fit "$n_prof" 12; BODY+=("  ${K}p$O  $UI_S $PROFILE")
+      ui_fit "Worktree" 12; BODY+=("  ${K}w$O  $UI_S ${WORKTREE:-—}")
+      if (( BG )); then _tv t 'background'; else _tv t 'open it, back here when you leave'; fi
+      ui_fit "$n_bg" 12; BODY+=("  ${K}g$O  $UI_S $t")
       if [ "$PERM_MODE" = yolo ]; then
         BODY+=("")
-        _tui_wrap "▲ YOLO activo: el agente ejecutará comandos y editará archivos sin pedir confirmación." "$cw"
+        _tv t '▲ YOLO on: the agent will run commands and edit files without asking.'
+        _tui_wrap "$t" "$cw"
         for p in "${WRAP[@]}"; do BODY+=("$C_ERR$T_BOLD$p$O"); done
       fi
-      BODY+=("" "Pulsa $K↵$O para elegir agente y zona.")
+      _tv t 'Press %s to choose the agent and the zone.' "$K↵$O"; BODY+=("" "$t")
       ;;
     swarm)
-      _tui_para "Lanza un coordinador y varios agentes ejecutores en una zona. El coordinador recibe la lista de su equipo y tu objetivo, delega por el bus y puede sumar, cambiar de modelo o cerrar agentes."
-      BODY+=("" "  $K•$O Zona → nombre del equipo → agente → cuántos → objetivo"
-             "  $K•$O Varios equipos por zona: arquitectura, seguridad, docs…"
-             "  $K•$O Un nombre que ya existe suma agentes a ese equipo"
-             "  $K•$O Se abre el cockpit del equipo al terminar" "" "Pulsa $K↵$O para crear el equipo.")
+      _tv t 'Launches a coordinator and several worker agents in a zone. The coordinator gets its team list and your objective, delegates through the bus and can add agents, switch models or close them.'; _tui_para "$t"
+      BODY+=("")
+      _tui_bul '•' 'Zone → team name → agent → how many → objective'
+      _tui_bul '•' 'Several teams per zone: architecture, security, docs…'
+      _tui_bul '•' 'Teams never mix: reports and alerts go to their own coordinator'
+      _tui_bul '•' 'An existing name adds agents to that team'
+      _tv t 'Press %s to create the team.' "$K↵$O"; BODY+=("" "$t")
+      ;;
+    teams)
+      _tv t 'Every team at a glance, and everything you do with one in two keystrokes.'; _tui_para "$t"
+      BODY+=("")
+      _tui_bul '▦' 'open its cockpit (live split view)'
+      _tui_bul '✉' 'message the coordinator (new objective, questions)'
+      _tui_bul '✚' 'add agents to the team'
+      _tui_bul '↗' 'enter the coordinator'
+      _tui_bul '✖' 'close the team (coordinator and agents)'
+      BODY+=("")
+      _tui_bul 'm' 'from anywhere in the menu · %s on a coordinator adds agents' '+'
+      _tv t 'Press %s to manage your teams.' "$K↵$O"; BODY+=("" "$t")
       ;;
     cockpit)
-      _tui_para "Pantalla dividida con el equipo de una zona: coordinador a la izquierda, agentes a la derecha y el bus en vivo. Se actualiza solo cuando entran o salen agentes."
-      _tui_menu_key_label
-      BODY+=("" "  $K${PRAMA_COCKPIT_KEY}$O  cockpit ⇄ agente con el foco" "  $K${PRAMA_NAV_KEY}$O  lista de agentes (ir a cualquiera)"
-             "  $K$UI_S$O  volver a este menú" "  ${K}Ctrl+b z$O  agrandar el panel con el foco" "" "Pulsa $K↵$O o ${K}c$O para abrirlo.")
+      _tv t "Split screen with one team: coordinator on the left, agents on the right, and the live bus. It follows agents joining or leaving."; _tui_para "$t"
+      _tui_menu_key_label; local mk=$UI_S
+      BODY+=("")
+      _tui_key_label "$PRAMA_COCKPIT_KEY"; _tui_bul "$UI_S" 'cockpit ⇄ focused agent'
+      _tui_key_label "$PRAMA_NAV_KEY"; _tui_bul "$UI_S" 'agent list (go to any)'
+      _tui_bul "$mk" 'back to this menu'
+      _tui_bul 'Ctrl+b z' 'zoom the focused pane'
+      _tv t 'Press %s or %s to open it.' "$K↵$O" "${K}c$O"; BODY+=("" "$t")
       ;;
     telegram)
-      _tui_para "Controla tus agentes desde el móvil con un bot de Telegram 24/7, aunque cierres Termius."
+      _tv t 'Control your agents from your phone with a 24/7 Telegram bot, even when your SSH app is closed: alerts, teams, quotas and reports.'; _tui_para "$t"
       BODY+=("")
-      if (( TUI_TG_RUNNING )); then BODY+=("Estado: $C_LIVE● bot activo$O")
-      else BODY+=("Estado: $M○ detenido$O"); fi
-      BODY+=("" "Pulsa $K↵$O para vincular, iniciar o detener el bot.")
+      local st
+      if (( TUI_TG_RUNNING )); then _tv st 'bot running'; _tv t 'Status: %s' "$C_LIVE● $st$O"
+      else _tv st 'stopped'; _tv t 'Status: %s' "$M○ $st$O"; fi
+      BODY+=("$t")
+      _tv t 'Press %s to link, start or stop the bot.' "$K↵$O"; BODY+=("" "$t")
       ;;
     doctor)
-      _tui_para "Diagnóstico y reparación del servidor:"
-      BODY+=("" "  $K•$O dependencias y agentes instalados" "  $K•$O clientes tmux colgados o sesiones zombi"
-             "  $K•$O configuración de tmux y botón «◂ MENU»" "  $K•$O metadatos huérfanos"
-             "  $K•$O reportes de fallos de los agentes (prama-agent feedback list)" "" "Pulsa $K↵$O para ejecutarlo.")
+      _tv t 'Server diagnosis and repair:'; _tui_para "$t"
+      BODY+=("")
+      _tui_bul '•' 'dependencies and installed agents'
+      _tui_bul '•' 'hung tmux clients or zombie sessions'
+      _tui_bul '•' 'tmux configuration and the "◂ MENU" button'
+      _tui_bul '•' 'orphaned metadata'
+      _tui_bul '•' 'bug reports from agents (prama-agent feedback list)'
+      _tv t 'Press %s to run it.' "$K↵$O"; BODY+=("" "$t")
+      ;;
+    prefs)
+      _tv t 'How prama looks and speaks. Saved in your config.env and applied at once, also to the tmux status bar of running agents.'; _tui_para "$t"
+      BODY+=("")
+      _tui_bul '◐' 'Language: %s' "$PRAMA_LANG_NAME"
+      _tui_bul '◑' 'Theme: %s' "$UI_THEME"
+      local ms; if (( TUI_MOUSE )); then _tv ms 'on'; else _tv ms 'off'; fi
+      _tui_bul '◒' 'Mouse and touch: %s' "$ms"
+      _tv t 'Press %s or %s to change them.' "$K↵$O" "$K,$O"; BODY+=("" "$t")
       ;;
   esac
 }
@@ -1184,7 +1350,7 @@ _tui_hub_detail() {
     local si=${item#s:} s st role c q m1 m2 path hint=''
     s=${S_NAME[si]} st=${S_STATE[si]} role=${S_ROLE[si]}
     state_color "$st"; local sc=$UI_S
-    _tui_state_es "$st"; local stl=$UI_S
+    _tui_state_label "$st"; local stl=$UI_S
     _tui_role_icon "$role"; local ri=$UI_S
     _tui_role_color "$role"; local rc=$UI_C
     c=${S_CPU[si]%.*}; [[ $c =~ ^[0-9]+$ ]] || c=0
@@ -1199,23 +1365,36 @@ _tui_hub_detail() {
     quota=$(quota_label "$s")
     [ -n "$quota" ] && m2+="  $C_MUTED◔ $quota$T_OFF"
     if [ "$st" = BLOCKED ] && info=$(session_block_info "$s"); then
-      m1="$C_ERR$T_BOLD▲ bloqueado: ${info%%|*}$T_OFF $C_MUTED${info#*|}$T_OFF"
+      local bl; _tv bl '▲ blocked: %s' "${info%%|*}"
+      m1="$C_ERR$T_BOLD$bl$T_OFF $C_MUTED${info#*|}$T_OFF"
     fi
     if [ "${TUI_QKEY:-}" != "$s|$TUI_LAST_COLLECT" ]; then
       TUI_QKEY="$s|$TUI_LAST_COLLECT"
       TUI_QLEN=$(queue_len "$s" 2>/dev/null) || TUI_QLEN=0
     fi
     q=$TUI_QLEN
-    [[ $q =~ ^[0-9]+$ ]] && (( q > 0 )) && m2+="  $C_BRASS✉ $q en cola$T_OFF"
-    (( ${S_ATT[si]:-0} > 0 )) && m2+="  $C_LIVE◉ conectado$T_OFF"
+    local tx
+    if [[ $q =~ ^[0-9]+$ ]] && (( q > 0 )); then _tv tx '✉ %d queued' "$q"; m2+="  $C_BRASS$tx$T_OFF"; fi
+    if (( ${S_ATT[si]:-0} > 0 )); then _tv tx '◉ attached'; m2+="  $C_LIVE$tx$T_OFF"; fi
+    # A coordinator is its team: show the team, its size and its objective.
+    local -a mt=()
+    if [ "${S_TREE[si]:-}" = T ]; then
+      local obj
+      [ -n "${TUI_OBJ[$s]+x}" ] || TUI_OBJ[$s]=$(state_get "$s" OBJECTIVE)
+      obj=${TUI_OBJ[$s]}
+      _tv tx '❖ team %s · %d agent(s)' "${TUI_TLABEL[$s]:-$s}" "${S_NMEM[si]:-0}"
+      [ -n "$obj" ] && tx+="  $C_MUTED◎ $obj"
+      mt=("${S_TCOLOR[si]}$tx$T_OFF")
+    fi
     if [ "$TUI_MODE" = compact ]; then
-      hint='↵ entrar'
+      _tv hint '↵ enter'
       m1="$sc● $stl$T_OFF $C_MUTED·$T_OFF CPU $c% $C_MUTED·$T_OFF $mem $C_MUTED· ${S_ETIME[si]}$T_OFF"
       if (( h >= 12 )); then _tui_preview_box "$w" "$h" "$s" "◉ $s" "" "$hint" "$m1"
       else _tui_preview_box "$w" "$h" "$s" "◉ $s" "$stl" "$hint"; fi
     else
-      hint='↵ entrar · t tarea · l logs'
-      _tui_preview_box "$w" "$h" "$s" "◉ $s" "" "$hint" "$m1" "$m2"
+      if [ "${S_TREE[si]:-}" = T ]; then _tv hint '↵ enter · t message · + agents · c cockpit'
+      else _tv hint '↵ enter · t task · l logs'; fi
+      _tui_preview_box "$w" "$h" "$s" "◉ $s" "" "$hint" "$m1" "$m2" "${mt[@]}"
     fi
   else
     local id=${item#a:}
@@ -1225,17 +1404,26 @@ _tui_hub_detail() {
   fi
 }
 
+# Keybar: the keys for what is selected first, global ones after; destructive keys in red.
 _tui_hub_footer() {
-  local item=${HUB_ITEMS[TUI_SEL]-}
+  local item=${HUB_ITEMS[TUI_SEL]-} si
+  TUI_KEYS=() TUI_KEYS_R=()
   if (( TUI_FILTER_EDIT )); then
-    TUI_KEYS=("↵|aplicar|ENTER" "esc|limpiar|ESC" "↑↓|mover|")
+    _tk '↵' 'apply' ENTER; _tk esc 'clear' ESC; _tk '↑↓' 'move'
   elif [[ $item == s:* ]]; then
-    TUI_KEYS=("↵|entrar|ENTER" "c|cockpit|c" "t|tarea|t" "l|logs|l" "r|reiniciar|r" "x|cerrar|x" "n|nuevo|n" "s|equipo|s" "/|filtrar|/")
+    si=${item#s:}
+    _tk '↵' 'enter' ENTER
+    if [ "${S_TREE[si]:-}" = T ]; then
+      _tk t 'message' t; _tk + 'agents' +; _tk c 'cockpit' c; _tk x 'close team' x 1
+    else
+      _tk t 'task' t; _tk c 'cockpit' c; _tk l 'logs' l; _tk r 'restart' r; _tk x 'close' x 1
+    fi
+    _tk m 'teams' m; _tk n 'new' n; _tk / 'filter' /
   else
-    TUI_KEYS=("↵|abrir|ENTER" "n|nuevo|n" "s|equipo|s" "c|cockpit|c" "/|filtrar|/")
+    _tk '↵' 'open' ENTER; _tk n 'new agent' n; _tk s 'new team' s; _tk m 'teams' m; _tk / 'filter' /
   fi
-  if [ "$TUI_MODE" = compact ]; then TUI_KEYS_R=("?|más|?")
-  else TUI_KEYS_R=("?|ayuda|?" "q|salir|q"); fi
+  if [ "$TUI_MODE" = compact ]; then _tkr '?' 'help' '?'
+  else _tkr '?' 'help' '?'; _tkr q 'quit' q; fi
   _tui_footer "$1"
 }
 
@@ -1308,41 +1496,46 @@ _tui_run_fullscreen() {
 _tui_external() {
   local crumb=$1 pause=$2 rc=0 prev=$TUI_CRUMBS
   shift 2
-  if ! declare -F "$1" >/dev/null; then tui_toast err "Función no disponible: $1"; return 0; fi
-  TUI_CRUMBS="Menú › $crumb"
+  local tx
+  if ! declare -F "$1" >/dev/null; then _tv tx 'Function not available: %s' "$1"; tui_toast err "$tx"; return 0; fi
+  _tv tx 'Menu'
+  TUI_CRUMBS="$tx › $crumb"
   tui_soft_suspend
   (( pause )) && printf '\n %s%s%s\n\n' "$C_NEON$T_BOLD" "$crumb" "$T_OFF"
   ( "$@" ) || rc=$?
   if (( pause )); then
-    printf '\n %s ↵ %s Pulsa una tecla para volver ' "$KEY_BADGE" "$T_OFF"
+    _tv tx 'Press a key to go back'
+    printf '\n %s ↵ %s %s ' "$KEY_BADGE" "$T_OFF" "$tx"
     IFS= read -rsn1 _ || true
   fi
   TUI_CRUMBS=$prev
   tui_soft_resume
   tui_collect 0
-  (( rc )) && tui_toast err "$crumb terminó con error (código $rc)"
+  if (( rc )); then _tv tx '%s ended with an error (code %d)' "$crumb" "$rc"; tui_toast err "$tx"; fi
   return 0
 }
 
 tui_attach_session() {
   local s=$1
-  _tui_short "$s"; local short=$UI_S
-  if ! tmx_has "$s"; then tui_toast err "La sesión $short ya no existe"; tui_collect 0; return 0; fi
+  _tui_short "$s"; local short=$UI_S tx
+  if ! tmx_has "$s"; then _tv tx 'Session %s no longer exists' "$short"; tui_toast err "$tx"; tui_collect 0; return 0; fi
   if _tui_run_fullscreen 1 tmx_attach "$s"; then
-    tui_toast info "De vuelta en Prama · $short sigue activa"
+    _tv tx 'Back in Prama · %s keeps running' "$short"; tui_toast info "$tx"
   else
-    tui_alert "No se pudo entrar a $short" "${TUI_LAST_ERR:-tmux attach falló}"
+    _tv tx 'Could not enter %s' "$short"; tui_alert "$tx" "${TUI_LAST_ERR:-tmux attach failed}"
   fi
   tui_collect 0
 }
 
 _tui_task() {
-  local s=$1 text='' out rc=0
+  local s=$1 text='' out rc=0 tx
   _tui_short "$s"; local short=$UI_S
-  tui_prompt "Tarea para $short" text || return 0
+  if [ "${TUI_ROLE_CACHE[$s]:-}" = coordinator ]; then _tv tx 'Message for the coordinator %s' "$short"
+  else _tv tx 'Task for %s' "$short"; fi
+  tui_prompt "$tx" text || return 0
   out=$(subcmd_bus assign "$s" "$text" 2>&1) || rc=$?
-  if (( rc == 0 )); then tui_toast ok "Tarea enviada a $short"
-  else tui_alert "No se pudo enviar la tarea" "${out:-error $rc}"; fi
+  if (( rc == 0 )); then _tv tx 'Sent to %s' "$short"; tui_toast ok "$tx"
+  else _tv tx 'Could not send the task'; tui_alert "$tx" "${out:-error $rc}"; fi
 }
 
 _tui_logs() {
@@ -1350,54 +1543,107 @@ _tui_logs() {
   if command -v less >/dev/null 2>&1; then
     _tui_short "$s"
     tui_suspend
-    tmx_capture "$s" 2000 1 | less -R +G "-Ps logs $UI_S  (q vuelve, / busca) " 2>/dev/null
+    local lp; _tv lp 'logs %s  (q back, / search) ' "$UI_S"
+    tmx_capture "$s" 2000 1 | less -R +G "-Ps$lp" 2>/dev/null
     tui_resume
   else
     tui_soft_suspend
     tmx_capture "$s" $(( TUI_TR - 3 )) 1
-    printf '\n %s ↵ %s Pulsa una tecla para volver ' "$KEY_BADGE" "$T_OFF"
+    local tx; _tv tx 'Press a key to go back'
+    printf '\n %s ↵ %s %s ' "$KEY_BADGE" "$T_OFF" "$tx"
     IFS= read -rsn1 _ || true
     tui_soft_resume
   fi
 }
 
 _tui_session_action() {
-  local k=$1 s=$2 short
+  local k=$1 s=$2 short q yes tx
   _tui_short "$s"; short=$UI_S
   case $k in
     t) _tui_task "$s" ;;
     l) _tui_logs "$s" ;;
     r)
-      if tui_confirm "¿Reiniciar «$short»? El agente se relanza en el mismo panel y retoma su conversación." 1 "Reiniciar"; then
-        if ( _fleet_restart_in_place "$s" ) >/dev/null 2>&1; then tui_toast ok "$short se está reiniciando"
-        else tui_toast err "No se pudo reiniciar $short"; fi
+      _tv q 'Restart "%s"? The agent is relaunched in the same pane and resumes its conversation.' "$short"
+      _tv yes 'Restart'
+      if tui_confirm "$q" 1 "$yes"; then
+        if ( _fleet_restart_in_place "$s" ) >/dev/null 2>&1; then _tv tx '%s is restarting' "$short"; tui_toast ok "$tx"
+        else _tv tx 'Could not restart %s' "$short"; tui_toast err "$tx"; fi
         tui_collect 0
       fi ;;
     x)
       # A coordinator with agents: one confirmation closes its whole team (and its cockpit);
       # other teams of the same zone keep working.
-      local label members=0 m
-      if [ "$(session_role "$s")" = coordinator ]; then
-        label=$(team_label "$s")
-        while IFS= read -r m; do [ "$(state_get "$m" PARENT)" = "$s" ] && (( members++ )); done < <(prama_sessions)
-        if (( members )); then
-          if tui_confirm "¿Cerrar el equipo «$label»? Se detienen el coordinador y sus $members agente(s)." 1 "Cerrar equipo"; then
-            if ( _swarm_stop "$s" ) >/dev/null 2>&1; then tui_toast ok "Equipo $label cerrado ($(( members + 1 )) agentes)"
-            else tui_toast err "No se pudo cerrar el equipo $label"; fi
-            TUI_ROLE_CACHE=() TUI_MCACHE=()
-            tui_collect 0
-          fi
-          return 0
-        fi
-      fi
-      if tui_confirm "¿Cerrar «$short»? El agente se detendrá y se perderá lo que no haya guardado." 1 "Cerrar"; then
+      if [ "$(session_role "$s")" = coordinator ] && _tui_close_team "$s"; then return 0; fi
+      _tv q 'Close "%s"? The agent stops and anything it has not saved is lost.' "$short"
+      _tv yes 'Close'
+      if tui_confirm "$q" 1 "$yes"; then
         tmx_kill "$s"
         state_remove "$s"
         unset "TUI_ROLE_CACHE[$s]" "TUI_MCACHE[$s]"
-        tui_toast ok "Sesión $short cerrada"
+        _tv tx 'Session %s closed' "$short"; tui_toast ok "$tx"
         tui_collect 0
       fi ;;
   esac
+}
+
+# _tui_team_members <coordinator> → TM (sessions whose PARENT is it)
+_tui_team_members() {
+  local m
+  TM=()
+  while IFS= read -r m; do [ "$(state_get "$m" PARENT)" = "$1" ] && TM+=("$m"); done < <(prama_sessions)
+  return 0
+}
+
+# _tui_close_team <coordinator> — asks and closes the team; 1 when it has no agents (close it alone).
+_tui_close_team() {
+  local s=$1 label q yes tx
+  _tui_team_members "$s"
+  (( ${#TM[@]} )) || return 1
+  label=$(team_label "$s")
+  _tv q 'Close the team "%s"? The coordinator and its %d agent(s) stop; other teams keep working.' "$label" "${#TM[@]}"
+  _tv yes 'Close team'
+  if tui_confirm "$q" 1 "$yes"; then
+    if ( _swarm_stop "$s" ) >/dev/null 2>&1; then _tv tx 'Team %s closed (%d agents)' "$label" $(( ${#TM[@]} + 1 )); tui_toast ok "$tx"
+    else _tv tx 'Could not close the team %s' "$label"; tui_toast err "$tx"; fi
+    TUI_ROLE_CACHE=() TUI_MCACHE=() TUI_TLABEL=() TUI_OBJ=()
+    tui_collect 0
+  fi
+  return 0
+}
+
+# _tui_team_grow <coordinator> — agent → how many, then swarm <zone> --team <team> (no cockpit).
+_tui_team_grow() {
+  local c=$1 zone team label rc i n wa tx step=1
+  zone=$(state_get "$c" ZONE) team=$(team_name "$c") label=$(team_label "$c")
+  _tui_agent_lists
+  local -a NL=() NM=() NA=() NT=()
+  for i in 1 2 3 4 5 6; do NL+=("$i"); _tv tx '+%d agent(s) for %s' "$i" "$label"; NM+=("$tx"); NA+=(1); NT+=(""); done
+  while :; do
+    _tv tx 'Menu'; local crumb="$C_MUTED$tx$T_OFF $C_MUTED›$T_OFF"
+    _tv tx 'Add agents'; TUI_LIST_CRUMBS="$crumb $T_BOLD$tx$T_OFF $C_MUTED›$T_OFF $label${wa:+ · $wa}"
+    if (( step == 1 )); then
+      _tv tx 'Which agent joins %s?' "$label"
+      rc=0; tui_list_run "$tx" AG_LABELS AG_METAS AG_AVAIL AG_TARGETS -1 || rc=$?
+      (( rc )) && break
+      wa=${AGENTS[CHOICE]}; step=2
+    else
+      _tv tx 'How many %s agents?' "$wa"
+      rc=0; tui_list_run "$tx" NL NM NA NT 0 || rc=$?
+      if (( rc )); then step=1; continue; fi
+      n=${NL[CHOICE]}
+      TUI_LIST_CRUMBS=''; tui_invalidate
+      if _tui_run_fullscreen 1 subcmd_swarm "$zone" --team "$team" --workers "$wa:$n" --no-open; then
+        _tv tx '%d %s agent(s) joined %s' "$n" "$wa" "$label"; tui_toast ok "$tx"
+      else
+        _tv tx 'Could not add agents'; tui_alert "$tx" "${TUI_LAST_ERR:-swarm}"
+      fi
+      break
+    fi
+  done
+  TUI_LIST_CRUMBS=''
+  tui_invalidate
+  tui_collect 0
+  return 0
 }
 
 # Cockpit of the selected session's zone; without a selection, pick among zones with agents.
@@ -1414,29 +1660,33 @@ _tui_cockpit() {
       [ -n "${cnt[$z]+x}" ] || zs+=("$z")
       cnt[$z]=$(( ${cnt[$z]:-0} + 1 ))
     done < <(prama_team_order)
-    if (( ${#zs[@]} == 0 )); then tui_toast info "No hay agentes: crea un equipo (❖ Nuevo equipo)"; return 0; fi
+    local tx
+    if (( ${#zs[@]} == 0 )); then _tv tx 'No agents yet: create a team (❖ New team)'; tui_toast info "$tx"; return 0; fi
     for z in "${zs[@]}"; do
       while IFS= read -r c; do
-        local n=0 m
-        while IFS= read -r m; do [ "$(state_get "$m" PARENT)" = "$c" ] && (( n++ )); done < <(prama_sessions)
-        CK_LABELS+=("$(team_label "$c")") CK_METAS+=("coordinador + $n agente(s)") CK_AVAIL+=(1) CK_TARGETS+=("")
+        _tui_team_members "$c"
+        _tv tx 'coordinator + %d agent(s)' "${#TM[@]}"
+        CK_LABELS+=("$(team_label "$c")") CK_METAS+=("$tx") CK_AVAIL+=(1) CK_TARGETS+=("$c")
         scopes+=("$c"); teamed[$z]=1
       done < <(zone_teams "$z")
       if [ -z "${teamed[$z]:-}" ]; then
-        CK_LABELS+=("$z") CK_METAS+=("${cnt[$z]} agente(s) sin coordinador") CK_AVAIL+=(1) CK_TARGETS+=("")
+        _tv tx '%d agent(s) without a coordinator' "${cnt[$z]}"
+        CK_LABELS+=("$z") CK_METAS+=("$tx") CK_AVAIL+=(1) CK_TARGETS+=("")
         scopes+=("$z")
       fi
     done
     if (( ${#scopes[@]} > 1 )); then
-      TUI_LIST_CRUMBS="${C_MUTED}Menú$T_OFF $C_MUTED›$T_OFF ${T_BOLD}Cockpit$T_OFF"
-      local rc=0; tui_list_run "¿Qué equipo quieres ver?" CK_LABELS CK_METAS CK_AVAIL CK_TARGETS 0 || rc=$?
+      _tv tx 'Menu'; TUI_LIST_CRUMBS="$C_MUTED$tx$T_OFF $C_MUTED›$T_OFF ${T_BOLD}Cockpit$T_OFF"
+      _tv tx 'Which team do you want to watch?'
+      local rc=0; tui_list_run "$tx" CK_LABELS CK_METAS CK_AVAIL CK_TARGETS 0 || rc=$?
       TUI_LIST_CRUMBS=''; tui_invalidate
       (( rc )) && return 0
       scopes=("${scopes[CHOICE]}")
     fi
   fi
   if ! _tui_run_fullscreen 1 subcmd_cockpit "${scopes[0]}"; then
-    tui_alert "No se pudo abrir el cockpit" "${TUI_LAST_ERR:-${scopes[0]}}"
+    local te; _tv te 'Could not open the cockpit'
+    tui_alert "$te" "${TUI_LAST_ERR:-${scopes[0]}}"
   fi
   tui_collect 0
 }
@@ -1444,17 +1694,19 @@ _tui_cockpit() {
 # tui_new_team — zone → team → worker agent → how many → objective, then `swarm` (opens the
 # cockpit). A zone can hold several teams: an existing name adds agents to that team.
 tui_new_team() {
-  local step=1 rc i zone='' team='' wa='' n=2 task='' coord=claude
+  local step=1 rc i zone='' team='' wa='' n=2 task='' coord=claude tx l_menu l_new l_zone
   is_in claude "${AGENTS[@]}" && agent_installed claude || coord=${AGENTS[0]}
   TUI_GIT_CACHE=()
   _tui_agent_lists
   local -a NL=() NM=() NA=() NT=()
-  for i in 1 2 3 4 5 6; do NL+=("$i"); NM+=("$i agente(s) ejecutor(es) + 1 coordinador ($coord)"); NA+=(1); NT+=(""); done
+  for i in 1 2 3 4 5 6; do NL+=("$i"); _tv tx '%d worker agent(s) + 1 coordinator (%s)' "$i" "$coord"; NM+=("$tx"); NA+=(1); NT+=(""); done
+  _tv l_menu 'Menu'; _tv l_new 'New team'; _tv l_zone 'zone'
   while :; do
-    TUI_LIST_CRUMBS="${C_MUTED}Menú$T_OFF $C_MUTED›$T_OFF ${T_BOLD}Nuevo equipo$T_OFF $C_MUTED›$T_OFF ${zone:-zona}${team:+ · $team}${wa:+ · $wa}"
+    TUI_LIST_CRUMBS="$C_MUTED$l_menu$T_OFF $C_MUTED›$T_OFF $T_BOLD$l_new$T_OFF $C_MUTED›$T_OFF ${zone:-$l_zone}${team:+ · $team}${wa:+ · $wa}"
     case $step in
       1) AGENT=$coord; _tui_zone_lists
-         rc=0; tui_list_run "¿En qué zona trabajará el equipo?" ZN_LABELS ZN_METAS ZN_AVAIL ZN_TARGETS -1 || rc=$?
+         _tv tx 'Which zone will the team work in?'
+         rc=0; tui_list_run "$tx" ZN_LABELS ZN_METAS ZN_AVAIL ZN_TARGETS -1 || rc=$?
          (( rc )) && break
          zone=${ZONES[CHOICE]}; step=15 ;;
       15) # Team: a new name creates a team with its own coordinator; an existing one adds agents.
@@ -1462,26 +1714,33 @@ tui_new_team() {
          existing=$(_swarm_teams_hint "$zone")
          [ -n "$existing" ] || def=$PRAMA_DEFAULT_TEAM
          team=''
-         if ! tui_prompt "Nombre del equipo${existing:+ (en $zone: $existing; un nombre existente suma agentes)}" team "$def"; then
+         if [ -n "$existing" ]; then _tv tx 'Team name (in %s: %s; an existing name adds agents)' "$zone" "$existing"
+         else _tv tx 'Team name'; fi
+         if ! tui_prompt "$tx" team "$def"; then
            step=1; continue
          fi
          team=${team,,}; team=${team// /-}
          if ! valid_team_name "$team"; then
-           tui_alert "Nombre de equipo inválido" "Usa minúsculas, números y guiones (máx. 20), p. ej. seguridad o docs."
+           local t1 t2; _tv t1 'Invalid team name'; _tv t2 'Use lowercase letters, digits and dashes (max. 20), e.g. security or docs.'
+           tui_alert "$t1" "$t2"
            continue
          fi
          step=2 ;;
-      2) rc=0; tui_list_run "Agente para los ejecutores" AG_LABELS AG_METAS AG_AVAIL AG_TARGETS -1 || rc=$?
+      2) _tv tx 'Agent for the workers'
+         rc=0; tui_list_run "$tx" AG_LABELS AG_METAS AG_AVAIL AG_TARGETS -1 || rc=$?
          if (( rc )); then step=15; continue; fi
          wa=${AGENTS[CHOICE]}; step=3 ;;
-      3) rc=0; tui_list_run "¿Cuántos ejecutores $wa?" NL NM NA NT 1 || rc=$?
+      3) _tv tx 'How many %s workers?' "$wa"
+         rc=0; tui_list_run "$tx" NL NM NA NT 1 || rc=$?
          if (( rc )); then step=2; continue; fi
          n=${NL[CHOICE]}; step=4 ;;
       4) task=''
-         tui_prompt "Objetivo para el coordinador (opcional)" task || task=''
+         _tv tx 'Objective for the coordinator (optional)'
+         tui_prompt "$tx" task || task=''
          TUI_LIST_CRUMBS=''; tui_invalidate
          if ! _tui_run_fullscreen 1 subcmd_swarm "$zone" --team "$team" --coord "$coord" --workers "$wa:$n" ${task:+--task "$task"}; then
-           tui_alert "No se pudo crear el equipo" "${TUI_LAST_ERR:-revisa prama-agent doctor}"
+           local t1 t2; _tv t1 'Could not create the team'; _tv t2 'check prama-agent doctor'
+           tui_alert "$t1" "${TUI_LAST_ERR:-$t2}"
          fi
          break ;;
     esac
@@ -1492,9 +1751,146 @@ tui_new_team() {
   return 0
 }
 
+# ── Teams screen: every team, then what to do with the chosen one ──────────
+tui_teams() {
+  local rc tx c m st nw obj l_menu l_teams
+  _tv l_menu 'Menu'; _tv l_teams 'Teams'
+  while :; do
+    local -a TL=() TMe=() TA=() TT=() TC=()
+    _tv tx '✚ New team'; TL+=("$tx")
+    _tv tx 'coordinator + agents in a zone, with its own objective'; TMe+=("$tx"); TA+=(1); TT+=(""); TC+=("")
+    while IFS='|' read -r c _ _; do
+      [ -n "$c" ] && [ "$(session_role "$c")" = coordinator ] || continue
+      _tui_team_members "$c"
+      nw=0
+      for m in "$c" "${TM[@]}"; do
+        st=${TUI_MCACHE[$m]:-}; [ "${st%%|*}" = WORKING ] && nw=$(( nw + 1 ))
+      done
+      obj=$(state_get "$c" OBJECTIVE)
+      _tv tx '%d agent(s) · %d working' "${#TM[@]}" "$nw"
+      [ -n "$obj" ] && tx+=" · ◎ $obj"
+      TL+=("❖ $(team_label "$c")") TMe+=("$tx") TA+=(1) TT+=("$c") TC+=("$c")
+    done < <(prama_team_order)
+    TUI_LIST_CRUMBS="$C_MUTED$l_menu$T_OFF $C_MUTED›$T_OFF $T_BOLD$l_teams$T_OFF"
+    _tv tx 'Teams (%d)' $(( ${#TL[@]} - 1 ))
+    rc=0; tui_list_run "$tx" TL TMe TA TT $(( ${#TL[@]} > 1 ? 1 : 0 )) || rc=$?
+    (( rc )) && break
+    if (( CHOICE == 0 )); then tui_new_team; continue; fi
+    _tui_team_menu "${TC[CHOICE]}"
+  done
+  TUI_LIST_CRUMBS=''
+  tui_invalidate
+  tui_collect 0
+  return 0
+}
+
+# _tui_team_menu <coordinator> — actions on one team; returns after closing it or with esc.
+_tui_team_menu() {
+  local c=$1 rc label tx l_menu l_teams
+  label=$(team_label "$c")
+  _tv l_menu 'Menu'; _tv l_teams 'Teams'
+  while tmx_has "$c"; do
+    local -a AL=() AM=() AA=() AT=() AK=(cockpit msg grow memory note enter close)
+    _tui_team_members "$c"
+    _tv tx '▦ Open the cockpit';            AL+=("$tx"); _tv tx 'live split view: coordinator, agents and bus'; AM+=("$tx")
+    _tv tx '✉ Message the coordinator';     AL+=("$tx"); _tv tx 'a new objective, a question, a change of plan'; AM+=("$tx")
+    _tv tx '✚ Add agents';                  AL+=("$tx"); _tv tx 'more workers for this team (they report to its coordinator)'; AM+=("$tx")
+    local nm; nm=$(( $(memory_count "$(state_get "$c" ZONE)" "$(team_name "$c")") + $(memory_count "$(state_get "$c" ZONE)") ))
+    _tv tx '🧠 Team memory (%d)' "$nm";     AL+=("$tx"); _tv tx 'decisions and findings the agents keep; read them in full'; AM+=("$tx")
+    _tv tx '✎ Add a note';                  AL+=("$tx"); _tv tx 'a decision or convention every agent of the team will read'; AM+=("$tx")
+    _tv tx '↗ Enter the coordinator';       AL+=("$tx"); _tv tx 'talk to it directly; %s brings you back' "${PRAMA_MENU_KEY//M-/Alt+}"; AM+=("$tx")
+    _tv tx '✖ Close the team';              AL+=("$tx"); _tv tx 'stops the coordinator and its %d agent(s)' "${#TM[@]}"; AM+=("$tx")
+    AA=(1 1 1 1 1 1 1) AT=("$c" "$c" "$c" "$c" "$c" "$c" "$c")
+    TUI_LIST_CRUMBS="$C_MUTED$l_menu › $l_teams$T_OFF $C_MUTED›$T_OFF $T_BOLD$label$T_OFF"
+    _tv tx 'Team %s' "$label"
+    rc=0; tui_list_run "$tx" AL AM AA AT 0 || rc=$?
+    (( rc )) && return 0
+    case ${AK[CHOICE]} in
+      cockpit) TUI_LIST_CRUMBS=''; tui_invalidate
+               if ! _tui_run_fullscreen 1 subcmd_cockpit "$c"; then _tv tx 'Could not open the cockpit'; tui_alert "$tx" "${TUI_LAST_ERR:-$c}"; fi ;;
+      msg)     TUI_ROLE_CACHE[$c]=coordinator; _tui_task "$c" ;;
+      grow)    _tui_team_grow "$c" ;;
+      memory)  tui_suspend
+               { subcmd_memory show "$c"; printf '\n'; } 2>&1 | less -R "-Ps$label  (q) " 2>/dev/null
+               tui_resume ;;
+      note)    local note=''
+               _tv tx 'Note for the memory of %s' "$label"
+               if tui_prompt "$tx" note; then
+                 if ( subcmd_memory add "$c" "$note" ) >/dev/null 2>&1; then _tv tx 'Saved to the memory of %s' "$label"; tui_toast ok "$tx"
+                 else _tv tx 'Could not save the note'; tui_toast err "$tx"; fi
+               fi ;;
+      enter)   TUI_LIST_CRUMBS=''; tui_attach_session "$c" ;;
+      close)   if _tui_close_team "$c"; then :; else _tui_session_action x "$c"; fi ;;
+    esac
+  done
+  return 0
+}
+
+# ── Preferences: language, theme (live preview), mouse ──────────────────────
+TUI_PREVIEW_THEME=''
+_tui_theme_preview() {
+  [ "${PRAMA_THEMES[$1]:-}" = "$TUI_PREVIEW_THEME" ] && return 0
+  TUI_PREVIEW_THEME=${PRAMA_THEMES[$1]:-}
+  prefs_set_theme "$TUI_PREVIEW_THEME" 0
+  TUI_TEAM_COLORS=("$C_NEON" "$C_PURP" "$C_LIVE" "$C_BRASS" "$C_INDIGO")
+  tui_invalidate
+}
+
+tui_prefs() {
+  local rc tx i cur l_menu l_prefs
+  while :; do
+    _tv l_menu 'Menu'; _tv l_prefs 'Preferences'
+    local -a PL=() PM=() PA=(1 1 1) PT=('' '' '')
+    _tv tx 'Language'; PL+=("◐ $tx"); PM+=("$PRAMA_LANG_NAME (${PRAMA_LANG:-auto})")
+    _tv tx 'Color theme'; PL+=("◑ $tx"); PM+=("$UI_THEME · $(_theme_desc "$UI_THEME")")
+    _tv tx 'Mouse and touch'; PL+=("◒ $tx")
+    if (( TUI_MOUSE )); then _tv tx 'on: tap to select, tap again to open'; else _tv tx 'off: the terminal selects text as usual'; fi
+    PM+=("$tx")
+    TUI_LIST_CRUMBS="$C_MUTED$l_menu$T_OFF $C_MUTED›$T_OFF $T_BOLD$l_prefs$T_OFF"
+    rc=0; tui_list_run "$l_prefs" PL PM PA PT 0 || rc=$?
+    (( rc )) && break
+    case $CHOICE in
+      0)
+        local -a LL=() LM=() LA=(1 1 1) LT=('' '' '') LC=(en es auto)
+        LL=("English" "Español"); _tv tx 'Automatic'; LL+=("$tx")
+        LM=("Interface in English" "Interfaz en español"); _tv tx 'from the locale (LANG)'; LM+=("$tx")
+        cur=0; for i in 0 1 2; do [ "${LC[i]}" = "${PRAMA_LANG:-auto}" ] && cur=$i; done
+        _tv tx 'Language'
+        rc=0; tui_list_run "$tx" LL LM LA LT "$cur" || rc=$?
+        if (( ! rc )) && prefs_set_lang "${LC[CHOICE]}"; then
+          _tv tx 'Interface language: %s' "$PRAMA_LANG_NAME"; tui_toast ok "$tx"
+        fi ;;
+      1)
+        local -a HL2=() HM=() HA=() HT=()
+        local orig=$UI_THEME
+        for i in "${!PRAMA_THEMES[@]}"; do
+          HL2+=("${PRAMA_THEMES[i]}"); HM+=("$(_theme_desc "${PRAMA_THEMES[i]}")"); HA+=(1); HT+=('')
+          [ "${PRAMA_THEMES[i]}" = "$UI_THEME" ] && cur=$i
+        done
+        _tv tx 'Color theme · moving previews it'
+        TUI_PREVIEW_THEME=$UI_THEME
+        TUI_LIST_ONMOVE=_tui_theme_preview
+        rc=0; tui_list_run "$tx" HL2 HM HA HT "$cur" || rc=$?
+        TUI_LIST_ONMOVE=''
+        if (( rc )); then prefs_set_theme "$orig" 0
+        else prefs_set_theme "${PRAMA_THEMES[CHOICE]}"; _tv tx 'Theme: %s' "$UI_THEME"; tui_toast ok "$tx"; fi
+        TUI_TEAM_COLORS=("$C_NEON" "$C_PURP" "$C_LIVE" "$C_BRASS" "$C_INDIGO")
+        tui_invalidate ;;
+      2)
+        TUI_MOUSE=$(( 1 - TUI_MOUSE ))
+        _config_set PRAMA_TUI_MOUSE "$TUI_MOUSE"
+        if (( TUI_MOUSE )); then tui_mouse_on; else tui_mouse_off; fi ;;
+    esac
+  done
+  TUI_LIST_CRUMBS=''
+  tui_invalidate
+  return 0
+}
+
 _tui_fzf() {
-  if ! command -v fzf >/dev/null 2>&1; then tui_toast err "fzf no está instalado (apt install fzf)"; return 0; fi
-  if (( ${#S_NAME[@]} == 0 )); then tui_toast info "No hay sesiones que inspeccionar"; return 0; fi
+  local tx
+  if ! command -v fzf >/dev/null 2>&1; then _tv tx 'fzf is not installed (apt install fzf)'; tui_toast err "$tx"; return 0; fi
+  if (( ${#S_NAME[@]} == 0 )); then _tv tx 'No sessions to inspect'; tui_toast info "$tx"; return 0; fi
   _tui_run_fullscreen 0 launch_fzf_cockpit || true
   tui_collect 0
 }
@@ -1528,38 +1924,43 @@ cycle_perm_mode() {
 }
 
 _tui_toggle() {
+  local tx
   case $1 in
     o)
       cycle_role
-      if [ "$ROLE" = reader ]; then tui_toast info "Rol: reader · permisos forzados a PLAN"
-      else tui_toast info "Rol del próximo agente: $ROLE"; fi ;;
+      if [ "$ROLE" = reader ]; then _tv tx 'Role: reader · permissions forced to PLAN'
+      else _tv tx 'Role of the next agent: %s' "$ROLE"; fi
+      tui_toast info "$tx" ;;
     y)
-      if [ "$ROLE" = reader ]; then tui_toast info "El rol reader siempre usa PLAN (solo lectura)"; return 0; fi
+      if [ "$ROLE" = reader ]; then _tv tx 'The reader role always uses PLAN (read-only)'; tui_toast info "$tx"; return 0; fi
       cycle_perm_mode
       _tui_perm_label "$PERM_MODE"
-      if [ "$PERM_MODE" = yolo ]; then tui_toast err "Permisos: ▲ YOLO — el agente no pedirá confirmación"
-      else tui_toast info "Permisos: $UI_S — $UI_D"; fi ;;
+      if [ "$PERM_MODE" = yolo ]; then _tv tx 'Permissions: ▲ YOLO — the agent will not ask for confirmation'; tui_toast err "$tx"
+      else _tv tx 'Permissions: %s — %s' "$UI_S" "$UI_D"; tui_toast info "$tx"; fi ;;
     e)
       REMOTE=$(( 1 - ${REMOTE:-0} ))
-      if (( REMOTE )); then tui_toast info "Control remoto nativo: on (claude/agy)"
-      else tui_toast info "Control remoto nativo: off"; fi ;;
-    p) cycle_profile; tui_toast info "Perfil LLM: $PROFILE" ;;
+      if (( REMOTE )); then _tv tx 'Native remote control: on (claude/agy)'
+      else _tv tx 'Native remote control: off'; fi
+      tui_toast info "$tx" ;;
+    p) cycle_profile; _tv tx 'LLM profile: %s' "$PROFILE"; tui_toast info "$tx" ;;
     w)
       local v=''
-      if tui_prompt "Rama del worktree (vacío = sin worktree)" v "$WORKTREE"; then
+      _tv tx 'Worktree branch (empty = no worktree)'
+      if tui_prompt "$tx" v "$WORKTREE"; then
         if [[ $v =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,62}$ ]] && [[ $v != *..* ]]; then
-          WORKTREE=$v; tui_toast ok "Worktree aislado: $WORKTREE"
+          WORKTREE=$v; _tv tx 'Isolated worktree: %s' "$WORKTREE"; tui_toast ok "$tx"
         else
-          tui_toast err "Nombre de rama no válido: $v"
+          _tv tx 'Invalid branch name: %s' "$v"; tui_toast err "$tx"
         fi
       elif (( ! TUI_PROMPT_CANCELLED )) || [ -z "$v" ]; then
-        [ -n "$WORKTREE" ] && tui_toast info "Sin worktree (directorio de la zona)"
+        if [ -n "$WORKTREE" ]; then _tv tx "No worktree (the zone's directory)"; tui_toast info "$tx"; fi
         WORKTREE=''
       fi ;;
     g)
       BG=$(( 1 - ${BG:-0} ))
-      if (( BG )); then tui_toast info "Al lanzar: en segundo plano"
-      else tui_toast info "Al lanzar: abrir y volver aquí al salir"; fi ;;
+      if (( BG )); then _tv tx 'On launch: in the background'
+      else _tv tx 'On launch: open it, back here when you leave'; fi
+      tui_toast info "$tx" ;;
   esac
 }
 
@@ -1570,7 +1971,9 @@ _tui_hub_activate() {
     s:*)         tui_attach_session "${S_NAME[${item#s:}]}" ;;
     a:new)       tui_new_agent ;;
     a:swarm)     tui_new_team ;;
+    a:teams)     tui_teams ;;
     a:cockpit)   _tui_cockpit "" ;;
+    a:prefs)     tui_prefs ;;
     a:telegram)  _tui_external "Telegram" 0 subcmd_telegram menu ;;
     a:doctor)    _tui_external "Doctor" 1 subcmd_doctor ;;
   esac
@@ -1622,13 +2025,18 @@ tui_hub_handle_key() {
     s|S)                tui_new_team ;;
     t|T|l|L|r|R|x|X)
       if [ -n "$s" ]; then _tui_session_action "${KEY,,}" "$s"
-      else tui_toast info "Selecciona primero una sesión (↑↓)"; fi ;;
+      else local tx; _tv tx 'Select an agent first (↑↓)'; tui_toast info "$tx"; fi ;;
+    +)
+      if [ -n "$s" ] && [ "${S_TREE[${item#s:}]:-}" = T ]; then _tui_team_grow "$s"
+      else local tx; _tv tx 'Select a team coordinator first (❖)'; tui_toast info "$tx"; fi ;;
+    m|M)                tui_teams ;;
+    ,)                  tui_prefs ;;
     c|C)                _tui_cockpit "$s" ;;
     f|F)                _tui_fzf ;;
     /)                  TUI_FILTER_EDIT=1 ;;
     ESC|LEFT|BACKSPACE|h)
       if [ -n "$TUI_FILTER" ]; then TUI_FILTER=''
-      else tui_toast info "Pulsa q para salir"; fi ;;
+      else local tx; _tv tx 'Press q to quit (agents keep running)'; tui_toast info "$tx"; fi ;;
     o|y|e|p|w|g)        _tui_toggle "$KEY" ;;
     '?')                _tui_help ;;
     q|Q)                TUI_QUIT=1 ;;
@@ -1640,11 +2048,11 @@ tui_hub_handle_key() {
 # ── Entry point ─────────────────────────────────────────────────────────────
 tui_plain_fallback() {
   local s
-  printf '%s v%s — el menú interactivo necesita una terminal (TTY).\n' "${PRAMA_BRAND:-PRAMA AGENT}" "${VERSION:-?}"
+  printf '%s v%s — %s\n' "${PRAMA_BRAND:-PRAMA AGENT}" "${VERSION:-?}" "$(_t 'the interactive menu needs a terminal (TTY).')"
   while IFS= read -r s; do
     [ -n "$s" ] && printf '  ● %-40s %s\n' "$s" "$(session_role "$s")"
   done < <(prama_sessions)
-  printf 'Uso: prama-agent <agente> <zona> · prama-agent status · prama-agent attach <sesión>\n'
+  printf '%s\n' "$(_t 'Usage: prama-agent <agent> <zone> · prama-agent status · prama-agent attach <session>')"
 }
 
 # tui_main — interactive hub. Uses/updates AGENT ZONE ROLE PERM_MODE REMOTE PROFILE WORKTREE BG.
@@ -1652,6 +2060,8 @@ tui_main() {
   if (( ! IS_TERM )) || [ ! -t 0 ] || [ ! -t 1 ]; then tui_plain_fallback; return 1; fi
   : "${ROLE:=executor}" "${PERM_MODE:=ask}" "${REMOTE:=0}" "${PROFILE:=default}" "${BG:=0}"
   : "${WORKTREE:=}" "${AGENT:=}" "${ZONE:=}"
+  # config.env is loaded after this file is sourced: read the TUI settings now.
+  TUI_MOUSE=${PRAMA_TUI_MOUSE:-1} TUI_TICK=${PRAMA_TUI_TICK:-2}
   tui_setup
   state_gc >/dev/null 2>&1 || true
   TUI_SEL=0 TUI_SEL_KEY='' TUI_SCROLL=0 TUI_FILTER='' TUI_FILTER_EDIT=0 TUI_QUIT=0
@@ -1678,7 +2088,7 @@ tui_main() {
 tui_list_run() {
   local title=$1 start=${6:--1}
   local -n _tl_lab=$2 _tl_met=$3 _tl_ava=$4 _tl_tgt=$5
-  local n=${#_tl_lab[@]} i sel=-1 pos=0 scroll=0 f='' fedit=0
+  local n=${#_tl_lab[@]} i sel=-1 pos=0 scroll=0 f='' fedit=0 moved=-1
   local -a vis=()
   if (( start >= 0 && start < n )); then sel=$start
   else
@@ -1699,6 +2109,8 @@ tui_list_run() {
     pos=-1
     for i in "${!vis[@]}"; do (( vis[i] == sel )) && { pos=$i; break; }; done
     if (( pos < 0 )); then pos=0; sel=${vis[0]:--1}; fi
+    # Optional callback when the highlighted item changes (theme preview).
+    if [ -n "${TUI_LIST_ONMOVE:-}" ] && (( sel >= 0 && sel != moved )); then moved=$sel; "$TUI_LIST_ONMOVE" "$sel"; fi
     TUI_REDRAW_FN=_tui_render_list
     _tui_render_list
     _tui_wait_key
@@ -1723,7 +2135,7 @@ tui_list_run() {
       END) (( nv )) && sel=${vis[nv-1]} ;;
       ENTER|RIGHT|SPACE|l)
         if (( sel >= 0 )) && [ "${_tl_ava[sel]:-0}" = 1 ]; then CHOICE=$sel; return 0; fi
-        (( sel >= 0 )) && tui_toast err "No disponible: ${_tl_lab[sel]} (${_tl_met[sel]##*· })" ;;
+        if (( sel >= 0 )); then local na; _tv na 'Not available: %s (%s)' "${_tl_lab[sel]}" "${_tl_met[sel]##*· }"; tui_toast err "$na"; fi ;;
       [1-9])
         i=$(( KEY - 1 ))
         if (( i < n )) && [ "${_tl_ava[i]:-0}" = 1 ]; then CHOICE=$i; return 0; fi ;;
@@ -1775,9 +2187,9 @@ _tui_render_list() {
   (( scroll < 0 )) && scroll=0
   local w=$tc cw=$(( tc - 2 )) bc=$C_BORDER_HI right
   if (( fedit )); then right="/$f▏"
-  elif [ -n "$f" ]; then right="/$f · $nv de $n"
-  elif (( nv > vh )); then right="$(( scroll + 1 ))-$(( scroll + vh )) de $nv"
-  else right="$n opciones"; fi
+  elif [ -n "$f" ]; then _tv right '/%s · %d of %d' "$f" "$nv" "$n"
+  elif (( nv > vh )); then _tv right '%d-%d of %d' $(( scroll + 1 )) $(( scroll + vh )) "$nv"
+  else _tv right '%d options' "$n"; fi
   _tb_top "$w" "$title" "$T_BOLD$C_NEON" "$right" "$bc"; TUI_FRAME[3]=$TB
   # label column
   local lw=4 maxlw=$(( (cw - 8) * 45 / 100 ))
@@ -1788,7 +2200,7 @@ _tui_render_list() {
   for ((r = 0; r < vh; r++)); do
     j=$(( scroll + r ))
     if (( nv == 0 && r == 0 )); then
-      ui_fit "  Sin resultados · esc limpia el filtro" "$cw"; SR="$C_MUTED$UI_S$T_OFF"
+      _tv UI_S '  No results · esc clears the filter'; ui_fit "$UI_S" "$cw"; SR="$C_MUTED$UI_S$T_OFF"
     elif (( j < nv )); then
       _tui_lrow "${vis[j]}" $(( vis[j] == sel )) "$cw" "$lw"
       TUI_HIT[$(( 4 + r ))]=${vis[j]}
@@ -1796,7 +2208,7 @@ _tui_render_list() {
     TUI_FRAME[4 + r]="$bc│$T_OFF$SR$bc│$T_OFF"
   done
   local hint=''
-  (( nv > scroll + vh )) && hint="▼ $(( nv - scroll - vh )) más"
+  (( nv > scroll + vh )) && _tv hint '▼ %d more' $(( nv - scroll - vh ))
   _tb_bot "$w" "$bc" "$hint"; TUI_FRAME[2 + lh]=$TB
   # detail / preview below the list
   local dh=$(( bh - lh )) row=$(( 3 + lh ))
@@ -1809,7 +2221,7 @@ _tui_render_list() {
       local -a dl=()
       _tui_wrap "$meta" $(( w - 4 ))
       dl=("${WRAP[@]}")
-      [ "${_tl_ava[sel]:-0}" = 1 ] || dl+=("" "$C_ERR✖ No disponible$T_OFF")
+      if [ "${_tl_ava[sel]:-0}" != 1 ]; then local na; _tv na '✖ Not available'; dl+=("" "$C_ERR$na$T_OFF"); fi
       cap=$(( ${#dl[@]} + 2 ))
       (( cap > dh )) && cap=$dh
       (( cap < 3 )) && cap=3
@@ -1817,9 +2229,10 @@ _tui_render_list() {
     fi
     for ((r = 0; r < ${#RP[@]}; r++)); do TUI_FRAME[row + r]=${RP[r]}; done
   fi
-  if (( fedit )); then TUI_KEYS=("↵|aplicar|ENTER" "esc|limpiar|ESC" "↑↓|mover|")
-  else TUI_KEYS=("↵|elegir|ENTER" "↑↓|mover|" "esc|volver|ESC" "/|filtrar|/" "1-9|directo|"); fi
-  TUI_KEYS_R=("?|ayuda|?")
+  TUI_KEYS=() TUI_KEYS_R=()
+  if (( fedit )); then _tk '↵' 'apply' ENTER; _tk esc 'clear' ESC; _tk '↑↓' 'move'
+  else _tk '↵' 'choose' ENTER; _tk esc 'back' ESC; _tk '↑↓' 'move'; _tk / 'filter' /; _tk 1-9 'jump'; fi
+  _tkr '?' 'help' '?'
   _tui_footer "$tr"
   tui_flush
 }
@@ -1886,9 +2299,9 @@ _tui_select_plain() {
   printf '\n %s\n' "$title" >&2
   for i in "${!_sp_l[@]}"; do
     printf '  %2d) %s — %s%s\n' $(( i + 1 )) "${_sp_l[i]}" "${_sp_m[i]:-}" \
-      "$([ "${_sp_a[i]:-0}" = 1 ] || printf ' (no disponible)')" >&2
+      "$([ "${_sp_a[i]:-0}" = 1 ] || _t ' (not available)')" >&2
   done
-  printf ' Opción (vacío = volver): ' >&2
+  printf ' %s ' "$(_t 'Option (empty = back):')" >&2
   IFS= read -r ans || return 2
   [[ $ans =~ ^[0-9]+$ ]] || return 2
   (( ans >= 1 && ans <= ${#_sp_l[@]} )) || return 2
@@ -1900,25 +2313,28 @@ _tui_select_plain() {
 # ── New-agent wizard: agent → zone → confirm ────────────────────────────────
 _tui_wiz_crumbs() {
   local step=$1 sep=" $C_MUTED›$T_OFF " a z c
-  local cur="$C_NEON$T_BOLD" done_c=$C_LIVE fut=$C_MUTED
-  if (( step == 1 )); then a="$cur▸ 1 Agente$T_OFF"; else a="$done_c✔ $AGENT$T_OFF"; fi
-  if (( step == 2 )); then z="$cur▸ 2 Zona$T_OFF"
+  local cur="$C_NEON$T_BOLD" done_c=$C_LIVE fut=$C_MUTED l_ag l_zo l_co l_menu l_new
+  _tv l_ag 'Agent'; _tv l_zo 'Zone'; _tv l_co 'Confirm'; _tv l_menu 'Menu'; _tv l_new 'New agent'
+  if (( step == 1 )); then a="$cur▸ 1 $l_ag$T_OFF"; else a="$done_c✔ $AGENT$T_OFF"; fi
+  if (( step == 2 )); then z="$cur▸ 2 $l_zo$T_OFF"
   elif (( step > 2 )); then z="$done_c✔ $ZONE$T_OFF"
-  else z="${fut}2 Zona$T_OFF"; fi
-  if (( step == 3 )); then c="$cur▸ 3 Confirmar$T_OFF"; else c="${fut}3 Confirmar$T_OFF"; fi
-  TUI_LIST_CRUMBS="${C_MUTED}Menú$T_OFF$sep${T_BOLD}Nuevo agente$T_OFF$sep$a$sep$z$sep$c"
+  else z="${fut}2 $l_zo$T_OFF"; fi
+  if (( step == 3 )); then c="$cur▸ 3 $l_co$T_OFF"; else c="${fut}3 $l_co$T_OFF"; fi
+  TUI_LIST_CRUMBS="$C_MUTED$l_menu$T_OFF$sep$T_BOLD$l_new$T_OFF$sep$a$sep$z$sep$c"
 }
 
 _tui_agent_lists() {
   AG_LABELS=() AG_METAS=() AG_AVAIL=() AG_TARGETS=()
-  local i a bin
+  local i a bin d ni
+  _tv ni 'not installed'
   for i in "${!AGENTS[@]}"; do
-    a=${AGENTS[i]}
+    a=${AGENTS[i]} d=${AGENT_DESCS[i]:-${AGENTS[i]}}
+    d=${I18N[$d]-$d}
     AG_LABELS+=("$a") AG_TARGETS+=("")
     if bin=$(command -v "$a" 2>/dev/null); then
-      AG_METAS+=("${AGENT_DESCS[i]:-$a} · ${bin/#$HOME/\~}") AG_AVAIL+=(1)
+      AG_METAS+=("$d · ${bin/#$HOME/\~}") AG_AVAIL+=(1)
     else
-      AG_METAS+=("${AGENT_DESCS[i]:-$a} · no instalado") AG_AVAIL+=(0)
+      AG_METAS+=("$d · $ni") AG_AVAIL+=(0)
     fi
   done
 }
@@ -1926,7 +2342,8 @@ _tui_agent_lists() {
 declare -gA TUI_GIT_CACHE=()
 _tui_zone_lists() {
   ZN_LABELS=() ZN_METAS=() ZN_AVAIL=() ZN_TARGETS=() ZN_GIT=()
-  local i dir l1 l2 br dirty meta name gi
+  local i dir l1 l2 br dirty meta name gi l_ch l_act l_nx
+  _tv l_ch '● changes'; _tv l_act '◉ %s already running here' "$AGENT"; _tv l_nx 'does not exist'
   local -A live=()
   for name in "${S_NAME[@]}"; do live[$name]=1; done
   for i in "${!ZONES[@]}"; do
@@ -1946,13 +2363,13 @@ _tui_zone_lists() {
       br=${gi%%|*} dirty=${gi#*|}
       ZN_GIT+=("$gi")
       meta="${dir/#$HOME/\~}  ⎇ $br"
-      (( dirty )) && meta+=" ● cambios"
+      (( dirty )) && meta+=" $l_ch"
       name=$(session_name_for "$AGENT" "${ZONES[i]}" "$ROLE" "$WORKTREE")
-      [ -n "${live[$name]:-}" ] && meta+="  ◉ $AGENT ya activo aquí"
+      [ -n "${live[$name]:-}" ] && meta+="  $l_act"
       ZN_METAS+=("$meta") ZN_AVAIL+=(1)
     else
       ZN_GIT+=("—|0")
-      ZN_METAS+=("$dir · no existe") ZN_AVAIL+=(0)
+      ZN_METAS+=("$dir · $l_nx") ZN_AVAIL+=(0)
     fi
   done
 }
@@ -1970,7 +2387,8 @@ tui_new_agent() {
           [ "${AGENTS[i]}" = "$AGENT" ] && [ "${AG_AVAIL[i]}" = 1 ] && start=$i
         done
         _tui_wiz_crumbs 1
-        rc=0; tui_list_run "Elige el agente" AG_LABELS AG_METAS AG_AVAIL AG_TARGETS "$start" || rc=$?
+        local tx; _tv tx 'Choose the agent'
+        rc=0; tui_list_run "$tx" AG_LABELS AG_METAS AG_AVAIL AG_TARGETS "$start" || rc=$?
         if (( rc )); then break; fi
         AGENT=${AGENTS[CHOICE]}; step=2 ;;
       2)
@@ -1978,7 +2396,8 @@ tui_new_agent() {
         _tui_zone_lists
         start=-1
         for i in "${!ZONES[@]}"; do [ "${ZONES[i]}" = "$ZONE" ] && start=$i; done
-        rc=0; tui_list_run "Elige la zona de trabajo" ZN_LABELS ZN_METAS ZN_AVAIL ZN_TARGETS "$start" || rc=$?
+        local tx; _tv tx 'Choose the working zone'
+        rc=0; tui_list_run "$tx" ZN_LABELS ZN_METAS ZN_AVAIL ZN_TARGETS "$start" || rc=$?
         if (( rc )); then step=1; continue; fi
         ZONE=${ZONES[CHOICE]}; step=3 ;;
       3)
@@ -1997,7 +2416,12 @@ tui_new_agent() {
 
 # Confirm screen rows: 0-5 toggles, 6 launch button.
 CF_KEYS=(o y e p w g)
-CF_NAMES=("Rol" "Permisos" "Remoto" "Perfil LLM" "Worktree" "Al lanzar")
+# _tui_cf_names → CF_NAMES (translated when used: the language is known after config.env)
+_tui_cf_names() {
+  CF_NAMES=('' '' '' '' Worktree '')
+  _tv 'CF_NAMES[0]' 'Role'; _tv 'CF_NAMES[1]' 'Permissions'; _tv 'CF_NAMES[2]' 'Remote'
+  _tv 'CF_NAMES[3]' 'LLM profile'; _tv 'CF_NAMES[5]' 'On launch'
+}
 
 # _tui_cf_value <idx> → CF_MAIN CF_DESC CF_COLOR
 _tui_cf_value() {
@@ -2005,17 +2429,17 @@ _tui_cf_value() {
     0) _tui_role_icon "$ROLE"; CF_MAIN="$UI_S $ROLE"; _tui_role_desc "$ROLE"; CF_DESC=" — $UI_S"
        _tui_role_color "$ROLE"; CF_COLOR=$UI_C ;;
     1) _tui_perm_label "$PERM_MODE"; CF_MAIN=$UI_S CF_COLOR=$UI_C CF_DESC=" — $UI_D"
-       [ "$ROLE" = reader ] && CF_DESC=' — forzado por el rol reader' ;;
-    2) if (( REMOTE )); then CF_MAIN='on' CF_DESC=' — control remoto nativo (claude/agy)'
+       [ "$ROLE" = reader ] && _tv CF_DESC ' — forced by the reader role' ;;
+    2) if (( REMOTE )); then CF_MAIN='on'; _tv CF_DESC ' — native remote control (claude/agy)'
        else CF_MAIN='off' CF_DESC=''; fi
        CF_COLOR=$C_TEXT ;;
-    3) CF_MAIN=$PROFILE CF_DESC=' — proveedor del modelo' CF_COLOR=$C_TEXT ;;
-    4) if [ -n "$WORKTREE" ]; then CF_MAIN="⎇ $WORKTREE" CF_DESC=' — rama aislada (git worktree)'
-       else CF_MAIN='—' CF_DESC=' sin aislamiento · ↵ para crear rama'; fi
+    3) CF_MAIN=$PROFILE CF_COLOR=$C_TEXT; _tv CF_DESC ' — model provider' ;;
+    4) if [ -n "$WORKTREE" ]; then CF_MAIN="⎇ $WORKTREE"; _tv CF_DESC ' — isolated branch (git worktree)'
+       else CF_MAIN='—'; _tv CF_DESC ' no isolation · ↵ to create a branch'; fi
        CF_COLOR=$C_PURP ;;
     5) _tui_menu_key_label
-       if (( BG )); then CF_MAIN='segundo plano' CF_DESC=' — no entra a la sesión'
-       else CF_MAIN='abrir' CF_DESC=" — vuelves aquí con $UI_S"; fi
+       if (( BG )); then _tv CF_MAIN 'background'; _tv CF_DESC " — doesn't open the session"
+       else _tv CF_MAIN 'open'; _tv CF_DESC ' — you come back here with %s' "$UI_S"; fi
        CF_COLOR=$C_TEXT ;;
   esac
 }
@@ -2038,41 +2462,48 @@ _tui_render_confirm() {
   local M=$C_MUTED O=$T_OFF
   local yolo=0; [ "$PERM_MODE" = yolo ] && yolo=1
   local -a warn=()
+  local tx l_ag l_zo l_se
+  _tui_cf_names
   if (( yolo )); then
-    _tui_wrap "▲ YOLO: el agente ejecutará comandos y editará archivos SIN pedir confirmación." $(( cw - 2 ))
+    _tv tx '▲ YOLO: the agent will run commands and edit files WITHOUT asking for confirmation.'
+    _tui_wrap "$tx" $(( cw - 2 ))
     warn=("${WRAP[@]}")
   fi
   # rows: top + summary + sep + 6 toggles + sep + warn + button + bottom
   local full=$(( 1 + 3 + 1 + 6 + 1 + ${#warn[@]} + 1 + 1 ))
+  adesc=${I18N[$adesc]-$adesc}
   if (( bh >= full )); then
-    summ+=("${M}Agente     $O$T_BOLD$AGENT$O $M· $adesc$O")
-    local zl="${M}Zona       $O$T_BOLD$ZONE$O $M· $zdir$O  $C_PURP⎇ $br$O"
-    (( dirty )) && zl+=" $C_BRASS● cambios$O"
+    _tv l_ag 'Agent'; _tv l_zo 'Zone'; _tv l_se 'Session'
+    ui_fit "$l_ag" 11; summ+=("$M$UI_S$O$T_BOLD$AGENT$O $M· $adesc$O")
+    ui_fit "$l_zo" 11; local zl="$M$UI_S$O$T_BOLD$ZONE$O $M· $zdir$O  $C_PURP⎇ $br$O"
+    if (( dirty )); then _tv tx '● changes'; zl+=" $C_BRASS$tx$O"; fi
     summ+=("$zl")
-    local sl="${M}Sesión     $O$name"
-    (( exists )) && sl+="  $C_BRASS▲ ya activa: se abrirá$O"
+    ui_fit "$l_se" 11; local sl="$M$UI_S$O$name"
+    if (( exists )); then _tv tx '▲ already running: it will open'; sl+="  $C_BRASS$tx$O"; fi
     summ+=("$sl")
   else
     local sl="$T_BOLD$AGENT$O $M@$O $T_BOLD$ZONE$O $M→ $name$O"
-    (( exists )) && sl+=" $C_BRASS▲ activa$O"
+    if (( exists )); then _tv tx '▲ running'; sl+=" $C_BRASS$tx$O"; fi
     summ+=("$sl")
   fi
   local row=3
-  _tb_top "$w" "Confirmar lanzamiento" "$T_BOLD$C_NEON" "" "$bc"; TUI_FRAME[row]=$TB; row=$(( row + 1 ))
+  _tv tx 'Confirm launch'
+  _tb_top "$w" "$tx" "$T_BOLD$C_NEON" "" "$bc"; TUI_FRAME[row]=$TB; row=$(( row + 1 ))
   for i in "${summ[@]}"; do _tb_line "$w" "$bc" "$i"; TUI_FRAME[row]=$TB; row=$(( row + 1 )); done
-  _tb_sep "$w" "$bc" "Ajustes · ↵ o tecla para cambiar"; TUI_FRAME[row]=$TB; row=$(( row + 1 ))
+  _tv tx 'Settings · ↵ or its key to change'
+  _tb_sep "$w" "$bc" "$tx"; TUI_FRAME[row]=$TB; row=$(( row + 1 ))
   local base R mark full_s vw keyc
   for ((i = 0; i < 6; i++)); do
     base=$T_OFF mark=' '
     (( i == CF_SEL )) && { base=$T_SEL; mark='▸'; }
     R=$T_OFF$base
     _tui_cf_value "$i"
-    vw=$(( cw - 18 ))
+    vw=$(( cw - 19 ))
     (( vw < 4 )) && vw=4
     ui_fit "$CF_MAIN$CF_DESC" "$vw"; full_s=$UI_S
     if [[ $full_s == "$CF_MAIN"* ]]; then full_s="$CF_COLOR$CF_MAIN$R$C_MUTED${full_s:${#CF_MAIN}}$R"
     else full_s="$CF_COLOR$full_s$R"; fi
-    ui_fit "${CF_NAMES[i]}" 10
+    ui_fit "${CF_NAMES[i]}" 11
     keyc=${CF_KEYS[i]}
     SR="$base $C_NEON$mark$R $C_MUTED$UI_S$R $full_s $C_NEON$keyc$R  $T_OFF"
     TUI_FRAME[row]="$bc│$T_OFF$SR$bc│$T_OFF"
@@ -2085,10 +2516,10 @@ _tui_render_confirm() {
     TUI_FRAME[row]="$bc│$T_OFF$T_WARN$UI_S$T_OFF$bc│$T_OFF"; row=$(( row + 1 ))
   done
   local btn
-  if (( yolo )); then btn='▲ LANZAR EN MODO YOLO'
-  elif (( BG )); then btn='▸ LANZAR EN SEGUNDO PLANO'
-  else btn='▸ LANZAR Y ABRIR'; fi
-  (( exists )) && ! (( BG )) && btn='▸ ABRIR SESIÓN EXISTENTE'
+  if (( yolo )); then _tv btn '▲ LAUNCH IN YOLO MODE'
+  elif (( BG )); then _tv btn '▸ LAUNCH IN THE BACKGROUND'
+  else _tv btn '▸ LAUNCH AND OPEN'; fi
+  if (( exists )) && ! (( BG )); then _tv btn '▸ OPEN THE RUNNING SESSION'; fi
   btn="  $btn  "
   ui_width "$btn"; local bw=$UI_W bst
   if (( CF_SEL == 6 )); then
@@ -2104,9 +2535,11 @@ _tui_render_confirm() {
   TUI_HIT[$row]=6
   row=$(( row + 1 ))
   _tb_bot "$w" "$bc"; TUI_FRAME[row]=$TB
-  if (( CF_SEL == 6 )); then TUI_KEYS=("↵|lanzar|ENTER" "↑↓|ajustes|" "esc|volver|ESC" "q|cancelar|q")
-  else TUI_KEYS=("↵|cambiar|ENTER" "↑↓|mover|" "esc|volver|ESC" "q|cancelar|q"); fi
-  TUI_KEYS_R=("?|ayuda|?")
+  TUI_KEYS=() TUI_KEYS_R=()
+  if (( CF_SEL == 6 )); then _tk '↵' 'launch' ENTER; _tk '↑↓' 'settings'
+  else _tk '↵' 'change' ENTER; _tk '↑↓' 'move'; fi
+  _tk esc 'back' ESC; _tk q 'cancel' q
+  _tkr '?' 'help' '?'
   _tui_footer "$tr"
   tui_flush
 }
@@ -2152,30 +2585,32 @@ _tui_confirm_screen() {
 _tui_launch() {
   local rc=0 out name
   [ "$ROLE" = reader ] && PERM_MODE=plan
-  if ! declare -F launch_agent >/dev/null; then tui_alert "No se pudo lanzar" "launch_agent no está disponible"; return 1; fi
+  local tx t2
+  _tv tx 'Could not launch the agent'
+  if ! declare -F launch_agent >/dev/null; then tui_alert "$tx" "launch_agent is not available"; return 1; fi
   if (( BG )); then
-    tui_toast info "Lanzando $AGENT en $ZONE…"
+    _tv t2 'Launching %s in %s…' "$AGENT" "$ZONE"; tui_toast info "$t2"
     _tui_render_confirm
     out=$(launch_agent "$AGENT" "$ZONE" "$ROLE" "$PERM_MODE" "$REMOTE" "$PROFILE" "$WORKTREE" porcelain 2>&1) || rc=$?
     if (( rc )); then
-      tui_alert "No se pudo lanzar el agente" "${out:-launch_agent terminó con código $rc}"
+      tui_alert "$tx" "${out:-launch_agent: exit $rc}"
       return 1
     fi
     name=${out%$'\n'}; name=${name##*$'\n'}
     if valid_session_name "$name"; then
       TUI_SEL_KEY="s:$name"; _tui_short "$name"
-      tui_toast ok "Agente $UI_S en marcha (segundo plano)"
+      _tv t2 'Agent %s running (background)' "$UI_S"; tui_toast ok "$t2"
     else
-      tui_toast ok "Agente $AGENT lanzado en segundo plano"
+      _tv t2 'Agent %s launched in the background' "$AGENT"; tui_toast ok "$t2"
     fi
   else
     name=$(session_name_for "$AGENT" "$ZONE" "$ROLE" "$WORKTREE")
     if ! _tui_run_fullscreen 1 launch_agent "$AGENT" "$ZONE" "$ROLE" "$PERM_MODE" "$REMOTE" "$PROFILE" "$WORKTREE" return; then
-      tui_alert "No se pudo lanzar el agente" "${TUI_LAST_ERR:-launch_agent falló}"
+      tui_alert "$tx" "${TUI_LAST_ERR:-launch_agent failed}"
       return 1
     fi
     TUI_SEL_KEY="s:$name"; _tui_short "$name"
-    tui_toast info "De vuelta en Prama · $UI_S sigue activa"
+    _tv t2 'Back in Prama · %s keeps running' "$UI_S"; tui_toast info "$t2"
   fi
   tui_collect 0
   return 0
@@ -2188,12 +2623,12 @@ prompt_worktree_modal()  { _tui_toggle w; }
 # Split-screen fuzzy inspector (fzf + live tmux preview on the prama socket).
 # Usable from the CLI (`prama-agent fzf`) and from the TUI (which suspends around it).
 launch_fzf_cockpit() {
-  if ! command -v fzf >/dev/null 2>&1; then warn "fzf no está instalado en PATH."; return 1; fi
+  if ! command -v fzf >/dev/null 2>&1; then warn "$(_t 'fzf is not installed (apt install fzf)')"; return 1; fi
   refresh_dimensions
   local -a names=() lines=()
   local s role st line sock prev_win sel
   mapfile -t names < <(prama_sessions)
-  if (( ${#names[@]} == 0 )); then warn "No hay sesiones activas para inspeccionar."; return 1; fi
+  if (( ${#names[@]} == 0 )); then warn "$(_t 'No sessions to inspect')"; return 1; fi
   for s in "${names[@]}"; do
     role=$(session_role "$s")
     st=$(detect_session_state "$s")
@@ -2210,11 +2645,11 @@ launch_fzf_cockpit() {
   sel=$(printf '%s\n' "${lines[@]}" | SHELL=${BASH:-bash} fzf \
     --ansi --layout=reverse --border=rounded \
     --border-label=" ◆ PRAMA · INSPECTOR " \
-    --prompt="sesión › " \
-    --header="↵ entrar · esc volver" \
+    --prompt="$(_t 'session') › " \
+    --header="$(_t '↵ enter · esc back')" \
     --preview="$preview" \
     --preview-window="$prev_win" \
-    --color="bg+:#1e3a5f,fg+:#f0f9ff,hl:#38bdf8,hl+:#34d399,border:#334155,label:#38bdf8,header:#64748b,prompt:#34d399,pointer:#38bdf8" \
+    --color="bg+:$TH_SEL,fg+:$TH_SELFG,hl:$TH_ACCENT,hl+:$TH_OK,border:$TH_BORDER,label:$TH_ACCENT,header:$TH_MUTED,prompt:$TH_OK,pointer:$TH_ACCENT" \
     2>/dev/tty) || return 0
   sel=${sel%% *}
   valid_session_name "$sel" || return 0

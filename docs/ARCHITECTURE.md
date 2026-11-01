@@ -9,7 +9,8 @@ Internal design reference for contributors (English only). User documentation:
 | --- | --- |
 | `bin/prama-agent` | Entrypoint: pre-dispatch, `prama_init`, subcommand dispatch, launch pipeline |
 | `lib/core.sh` | Config loading, private state dirs, **dedicated tmux server**, session state, task queues, event log, process telemetry. No UI. |
-| `lib/ui.sh` | Theme, display-width aware box engine, widgets (`state_badge`, `draw_gauge`, …) |
+| `lib/i18n.sh` | Interface language: `_t` / `_tv` (English msgid → catalog `lib/lang/<lang>/*.sh`), `i18n_init` |
+| `lib/ui.sh` | Color themes (`PRAMA_THEMES`, `TH_*` hex for tmux/fzf), display-width aware box engine, widgets |
 | `lib/agents.sh` | Per-agent CLI flag builders, provider profiles, git worktrees |
 | `lib/roles.sh` | Role prompts, in-pane supervisor (`internal_runner`), daemon loop |
 | `lib/bus.sh` | `prama-agent bus …`: assign, report, broadcast, queues, events |
@@ -17,12 +18,14 @@ Internal design reference for contributors (English only). User documentation:
 | `lib/health.sh` | CLI hooks (claude, agy) → health file, status line → quota file, `BLOCKED`/quota alerts, fleet watchdog, queued delivery |
 | `lib/fleet.sh` | `prama-agent fleet …`: spawn/kill/model/edit/restart with guard rails |
 | `lib/feedback.sh` | `prama-agent feedback …`: bug reports from agents and the operator (local, redacted, deduplicated) |
+| `lib/memory.sh` | `prama-agent memory …`: shared team / zone notes (`$PRAMA_STATE_HOME/memory`) |
+| `lib/prefs.sh` | `lang` and `theme`: apply, save (`_config_set`) and reload the tmux config |
 | `lib/setup.sh` | First steps: `setup` wizard, `login` (agent sign-in status), `zones add/remove/scan` (`zones.conf`) |
 | `lib/telegram.sh` + `lib/telegram_bot.py` | Telegram bridge |
 | `lib/tui.sh` | Interactive full-screen TUI |
 
 Source order: `core.sh` → `ui.sh` → `agents.sh` → `roles.sh` → `bus.sh` → `swarm.sh` → `health.sh` → `fleet.sh` →
-`feedback.sh` → `setup.sh` → `telegram.sh` → `tui.sh`. `--internal-hook` and `--internal-statusline` are fast paths that only source
+`feedback.sh` → `memory.sh` → `setup.sh` → `prefs.sh` → `telegram.sh` → `tui.sh` (`core.sh` sources `i18n.sh`). `--internal-hook` and `--internal-statusline` are fast paths that only source
 `core.sh` + `health.sh`; outside prama panes the hook exits before sourcing anything (agy's hooks are
 global), and the status line reuses its last output for `PRAMA_SL_MIN` seconds using bash builtins only
 (agy redraws it several times per second).
@@ -63,6 +66,12 @@ creates private dirs).
     sender's own agents first, and `_fleet_authorize` refuses another team's agents.
 15. **prama never handles agent credentials.** `login` asks each CLI (`claude auth status`, agy's token
     file) and opens the CLI's own sign-in; `zones.conf` and every other prama file is data.
+16. **Translations are data and never change behaviour.** Catalogs only add `I18N[msgid]=text`; machine
+    contracts stay untranslated: `--json` / `--porcelain` output, events, state and health keys, the
+    `[PRAMA-SWARM ROLE: … ]` marker, callback data. Screen parsers accept both languages' bus tags.
+    Strings are translated when used, never at source time (the language is known after config.env).
+17. **Memory is data, scoped like teams.** Notes are single redacted lines in private files, never
+    sourced; an agent writes only to its own team's (or zone's) memory and cannot clear one.
 
 ## core.sh API
 

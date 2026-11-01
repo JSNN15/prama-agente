@@ -19,8 +19,8 @@ Paquetes recomendados: `sudo apt install tmux git jq` (y `mosh` si te vas a cone
 ## 2. Instala prama-agent
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agente/main/install.sh | sudo bash   # para todo el sistema
-curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agente/main/install.sh | bash        # solo para tu usuario
+curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agent/main/install.sh | sudo bash   # para todo el sistema
+curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agent/main/install.sh | bash        # solo para tu usuario
 ```
 
 ## 3. Ejecuta el asistente
@@ -59,6 +59,10 @@ prama-agent zones remove backend
 
 Las zonas registradas viven en `~/.config/prama-agent/zones.conf` (solo datos). También puedes
 declararlas en `config.env` (`ZONES`, `ZONE_DIRS`), que gana si hay un nombre repetido.
+
+**Idioma y colores.** La primera pregunta es el idioma de la interfaz (español o inglés; después:
+`prama-agent lang en`). `prama-agent theme` muestra los temas de color (`theme light` para una terminal
+clara); ambos están también en **⚙ Preferencias** del menú.
 
 **Permisos.** `ask` (el agente pregunta antes de cada acción, por defecto) o `yolo` (sin
 confirmaciones, solo en servidores aislados que controlas). Cada agente puede cambiarlo con `--ask`,
@@ -110,6 +114,8 @@ su equipo. Si repites `swarm` con el nombre de un equipo existente, los agentes 
 | Agente siguiente / anterior | `Ctrl+b n` / `Ctrl+b p` |
 | Cerrar un agente | `prama-agent stop <sesión>`, o `x` en el menú |
 | Cerrar un equipo | `prama-agent swarm stop backend --team seguridad`, o `x` sobre su coordinador |
+| Gestionar equipos | `m` en el menú: cockpit, mensaje, sumar agentes, memoria, cerrar |
+| Memoria del equipo | `prama-agent memory show backend --team seguridad` · `memory add …` |
 | Cerrar todo | `prama-agent stop --all -y` |
 
 Desde el celular: mosh más el cockpit compacto, o el bot de Telegram (`prama-agent telegram setup`).
@@ -122,4 +128,4 @@ Ver la sección «Desde el celular» del README.
   `trust`, `model`).
 - Los agentes reportan solos los fallos de prama-agent (`prama-agent feedback list`);
   `feedback export <id>` te da el cuerpo de un issue para
-  [GitHub](https://github.com/JSNN15/prama-agente/issues).
+  [GitHub](https://github.com/JSNN15/prama-agent/issues).

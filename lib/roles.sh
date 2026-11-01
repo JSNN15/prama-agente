@@ -26,11 +26,116 @@ role_badge() {
 # Builds the coordination system prompt injected into agents so they can talk to each other.
 # Session names are validated by core (SESSION_NAME_RE); the zone is free text (directory
 # basename), so non-printable characters are stripped before it lands in the prompt.
+# The prompt is in the interface language (the agents answer and report in it); the
+# [PRAMA-SWARM ROLE: …] header is machine-parsed and identical in every language.
 build_role_system_prompt() {
   local role=$1 session_name=$2 zone=$3
   session_name=${session_name//[^A-Za-z0-9_-]/}
   zone=${zone//[^[:print:]]/}
-  local bus_help
+  local team
+  team=$(state_get "$session_name" TEAM "${PRAMA_TEAM:-$PRAMA_DEFAULT_TEAM}")
+  team=${team//[^a-z0-9-]/}
+  local agents_list=${AGENTS[*]}
+  agents_list=${agents_list// /|}
+  case ${PRAMA_UI_LANG:-en} in
+    es) _role_prompt_es ;;
+    *)  _role_prompt_en ;;
+  esac
+}
+
+# _role_prompt_en / _role_prompt_es — the role prompt text; they read the locals of
+# build_role_system_prompt (role session_name zone team agents_list).
+_role_prompt_en() {
+  local bus_help models_help
+  bus_help=$(cat <<EOF
+Multi-agent bus commands (run them with your Bash tool):
+- See live agents, roles, queues and latest events:  prama-agent bus status
+- Assign a task to an exact session or to a role:    prama-agent bus assign <session|coordinator|executor|reader|daemon> "<instruction>"
+- Report a result to the coordinator:                prama-agent bus report "<summary>"
+- See the pending tasks in your queue:               prama-agent bus inbox $session_name
+- Read another agent's terminal:                     prama-agent logs <session> 80
+- Report a prama-agent bug (not one in your task):   prama-agent feedback "<command, what you expected, what you got>"
+- Team memory (decisions, conventions, findings, where the work stands; it survives restarts and
+  reaches new agents): read it with 'prama-agent memory show' when you start; add a short note with
+  'prama-agent memory add "<note>"' when you decide or learn something durable
+  (--zone-wide for facts every team of the zone needs).
+EOF
+)
+  models_help="Models: claude → opus | sonnet | haiku (or a full id); agy → ids from 'prama-agent fleet models agy'
+(e.g. gemini-3.8-flash-high). Use fast/cheap models for mechanical tasks (tests, scoped refactors,
+documentation) and the most capable ones for design and delicate changes."
+  if is_in opencode "${AGENTS[@]}"; then
+    models_help+="
+opencode (experimental) → openrouter/<provider>/<model> (e.g. openrouter/qwen/qwen3-coder:free);
+list them with: prama-agent fleet models opencode."
+  fi
+  case "$role" in
+    coordinator)
+      cat <<EOF
+[PRAMA-SWARM ROLE: COORDINATOR | session=$session_name | zone=$zone | team=$team]
+You are the COORDINATOR / ARCHITECT agent of team '$team' in zone '$zone'.
+Your mission is to plan, split the work, review code and coordinate the agents of your team.
+Your team is the agents you launch (fleet spawn, swarm): their reports and alerts come to you.
+The zone may have other teams with other goals: do not assign them work or manage their agents.
+Delegate with 'prama-agent bus assign', check progress with 'prama-agent bus status' and
+'prama-agent logs <session>'. Reports from other agents reach you as "[REPORT FROM <session>]: …".
+Fleet alerts arrive as "[PRAMA ALERT] …" (an agent blocked by login, quota, credit,
+model, or stopped) and when an account passes ${PRAMA_QUOTA_WARN:-90}% of its quota (5h or 7d window): decide whether to
+restart it, change its model, reassign its task, spread work over other agents/models or tell the human.
+$bus_help
+
+Fleet management (you manage your agents; everything returns JSON with --json):
+- Full status (state, block and reason, model, preset, queue, quota % and reset): prama-agent fleet status --json
+- Available agents and presets (profiles with skills):              prama-agent fleet presets
+- Launch an extra agent:  prama-agent fleet spawn <$agents_list> $zone [--role executor|reader] [--model M] [--preset P] [--name N] [--worktree branch] [--task "initial instruction"]
+- Add several executors to your team at once: prama-agent swarm $zone --workers agy:3 [--worker-model M] --no-open
+- Assigning by role (e.g. 'bus assign executor "…"') picks from your team's agents first.
+- Change the model (restarts in the same pane and keeps the conversation): prama-agent fleet model <session> <model>
+- Edit the configuration (model, effort, preset, permissions):  prama-agent fleet edit <session> [--model M] [--effort E] [--preset P]
+- Restart an agent (e.g. after an error):                prama-agent fleet restart <session>
+- Close an agent you no longer need:                     prama-agent fleet kill <session>
+$models_help
+Keep the team memory current: record each decision, the plan and who does what with
+'prama-agent memory add', so a restarted coordinator or a new agent can pick up the work.
+Close the extra agents when you are done.
+Limit of simultaneous agents: ${PRAMA_FLEET_MAX:-8}.
+EOF
+      ;;
+    executor)
+      cat <<EOF
+[PRAMA-SWARM ROLE: EXECUTOR | session=$session_name | zone=$zone]
+You are an EXECUTOR agent in zone '$zone'.
+Your mission is to implement code, run tests and verify that everything builds without errors.
+Tasks reach you as "[TASK FROM <session>]: …". When you finish, report your result with:
+  prama-agent bus report "<concise summary of changes and tests>"
+$bus_help
+EOF
+      ;;
+    reader)
+      cat <<EOF
+[PRAMA-SWARM ROLE: READER (READ-ONLY) | session=$session_name | zone=$zone]
+You are a READER / AUDITOR agent in strict READ-ONLY mode in zone '$zone'.
+Do NOT modify files or run destructive commands. Analyze architecture, logs and bugs,
+and report your findings with:
+  prama-agent bus report "<findings>"
+$bus_help
+EOF
+      ;;
+    daemon)
+      cat <<EOF
+[PRAMA-SWARM ROLE: DAEMON WORKER | session=$session_name | zone=$zone]
+You are an autonomous WORKER / DAEMON agent in zone '$zone', running in headless mode.
+Process the requested task from start to finish without asking for interactive confirmation, and end with
+a clear summary (the supervisor logs it on the bus). If the task asks for it, you can report with:
+  prama-agent bus report "<summary>"
+$bus_help
+EOF
+      ;;
+  esac
+}
+
+_role_prompt_es() {
+  local bus_help models_help
   bus_help=$(cat <<EOF
 Comandos del bus multi-agente (ejecútalos con tu herramienta Bash):
 - Ver agentes vivos, roles, colas y últimos eventos: prama-agent bus status
@@ -39,13 +144,12 @@ Comandos del bus multi-agente (ejecútalos con tu herramienta Bash):
 - Ver tareas pendientes en tu cola:                  prama-agent bus inbox $session_name
 - Leer la terminal de otro agente:                   prama-agent logs <sesión> 80
 - Reportar un fallo de prama-agent (no de tu tarea):  prama-agent feedback "<comando, qué esperabas, qué obtuviste>"
+- Memoria del equipo (decisiones, convenciones, hallazgos, en qué va el trabajo; sobrevive reinicios
+  y llega a los agentes nuevos): léela con 'prama-agent memory show' al empezar; agrega una nota breve
+  con 'prama-agent memory add "<nota>"' cuando decidas o aprendas algo durable
+  (--zone-wide para hechos que necesitan todos los equipos de la zona).
 EOF
 )
-  local team
-  team=$(state_get "$session_name" TEAM "${PRAMA_TEAM:-$PRAMA_DEFAULT_TEAM}")
-  team=${team//[^a-z0-9-]/}
-  local agents_list=${AGENTS[*]} models_help
-  agents_list=${agents_list// /|}
   models_help="Modelos: claude → opus | sonnet | haiku (o un id completo); agy → ids de 'prama-agent fleet models agy'
 (p. ej. gemini-3.8-flash-high). Usa modelos rápidos/baratos para tareas mecánicas (tests, refactors
 acotados, documentación) y los más capaces para diseño y cambios delicados."
@@ -80,6 +184,8 @@ Gestión de la flota (tú administras a tus agentes; todo devuelve JSON con --js
 - Reiniciar un agente (p. ej. tras un error):                prama-agent fleet restart <sesión>
 - Cerrar un agente que ya no necesitas:                      prama-agent fleet kill <sesión>
 $models_help
+Mantén al día la memoria del equipo: registra cada decisión, el plan y quién hace qué con
+'prama-agent memory add', para que un coordinador reiniciado o un agente nuevo retome el trabajo.
 Cierra los agentes extra al terminar.
 Límite de agentes simultáneos: ${PRAMA_FLEET_MAX:-8}.
 EOF
@@ -198,9 +304,9 @@ _runner_cleanup() {
 _runner_fatal() {
   refresh_dimensions
   printf '\n'
-  box_top "✖ NO SE PUDO INICIAR EL AGENTE" "${_RUNNER_SESSION:-}" "$C_ERR"
+  box_top "$(_t '✖ COULD NOT START THE AGENT')" "${_RUNNER_SESSION:-}" "$C_ERR"
   box_row "$C_ERR" "$1"
-  box_bottom "Pulsa una tecla para cerrar" "$C_ERR"
+  box_bottom "$(_t 'Press a key to close')" "$C_ERR"
   [ -t 0 ] && { IFS= read -r -n1 -t 300 _ || true; }
   _runner_cleanup
   exit 1
@@ -209,12 +315,13 @@ _runner_fatal() {
 # Compact one-line daemon heartbeat. Contains the PRAMA_DAEMON marker used by detect_session_state.
 _daemon_heartbeat() {
   local session=$1 cycle=$2 left=$3 eol=${4:-}
-  local qs qr cr='' clr='' next
+  local qs qr cr='' clr='' next mid
   qs=$(queue_len "$session"); qr=$(queue_len daemon)
   [ -t 1 ] && { cr=$'\r'; clr=$'\e[K'; }
-  if [ "$left" = oneshot ]; then next='oneshot: fin'; else printf -v next 'próximo en %3ss' "$left"; fi
-  printf '%s %s♺%s %s%s%s · ciclo #%d · cola %s%s%s+%s · %s %sPRAMA_DAEMON%s%s%s' \
-    "$cr" "$C_PURP" "$C_OFF" "$C_MUTED" "$(date +%H:%M:%S)" "$C_OFF" "$cycle" \
+  if [ "$left" = oneshot ]; then _tv next 'oneshot: end'; else _tv next 'next in %3ss' "$left"; fi
+  _tv mid '· cycle #%d · queue' "$cycle"
+  printf '%s %s♺%s %s%s%s %s %s%s%s+%s · %s %sPRAMA_DAEMON%s%s%s' \
+    "$cr" "$C_PURP" "$C_OFF" "$C_MUTED" "$(date +%H:%M:%S)" "$C_OFF" "$mid" \
     "$C_BOLD" "$qs" "$C_OFF" "$qr" "$next" "$C_DIM" "$C_OFF" "$clr" "$eol"
 }
 
@@ -228,13 +335,15 @@ _runner_daemon_loop() {
 
   refresh_dimensions
   box_top "♺ DAEMON // $session" "${agent} · ${perm^^}" "$C_PURP"
-  box_row "$C_PURP" "Zona: ${C_NEON}$target_dir${C_OFF} · Rama: ${C_NEON}⎇ $(_runner_branch "$target_dir")${C_OFF} · Intervalo: ${interval}s"
-  box_row "$C_PURP" "Colas: ${C_BOLD}$session${C_OFF} → ${C_BOLD}daemon${C_OFF} (compartida)${PRAMA_DAEMON_TASK:+ → tarea recurrente}"
+  box_row "$C_PURP" "$(_t 'Zone: %s · Branch: %s · Interval: %ss' "${C_NEON}$target_dir${C_OFF}" "${C_NEON}⎇ $(_runner_branch "$target_dir")${C_OFF}" "$interval")"
+  local recur=''
+  [ -n "${PRAMA_DAEMON_TASK:-}" ] && recur=" $(_t '→ recurring task')"
+  box_row "$C_PURP" "$(_t 'Queues: %s → %s (shared)%s' "${C_BOLD}$session${C_OFF}" "${C_BOLD}daemon${C_OFF}" "$recur")"
   if [ "$perm" = "ask" ] || [ "$perm" = "safe" ]; then
-    box_row "$C_PURP" "${C_BRASS}▲ Modo ASK en headless: no hay quien apruebe, las herramientas que${C_OFF}"
-    box_row "$C_PURP" "${C_BRASS}  requieran permiso serán DENEGADAS. Usa --plan o --yolo si lo necesitas.${C_OFF}"
+    box_row "$C_PURP" "${C_BRASS}$(_t '▲ ASK mode while headless: nobody is there to approve, so tools that')${C_OFF}"
+    box_row "$C_PURP" "${C_BRASS}$(_t '  need permission will be DENIED. Use --plan or --yolo if you need them.')${C_OFF}"
   fi
-  box_bottom "prama-agent bus assign $session \"<tarea>\"" "$C_PURP"
+  box_bottom "$(_t 'prama-agent bus assign %s "<task>"' "$session")" "$C_PURP"
 
   local cycle=0 task src rc
   while true; do
@@ -243,7 +352,7 @@ _runner_daemon_loop() {
       state_set "$session" RESTART_REQ=
       compose_session_cmd "$session"
       set -- "${CMD[@]}"
-      printf '\n %s↻ Reconfigurado%s %s\n' "$C_NEON" "$C_OFF" "${AGENT_MODEL:+modelo $AGENT_MODEL}"
+      printf '\n %s%s%s %s\n' "$C_NEON" "$(_t '↻ Reconfigured')" "$C_OFF" "${AGENT_MODEL:+$(_t 'model %s' "$AGENT_MODEL")}"
     fi
     task='' src=''
     if task=$(queue_pop "$session"); then src=$session
@@ -253,7 +362,7 @@ _runner_daemon_loop() {
     fi
 
     if [ -n "$task" ]; then
-      printf '\n %s▸ TAREA%s %s(%s · %s)%s %s\n\n' "$C_LIVE$C_BOLD" "$C_OFF" "$C_MUTED" "$src" "$(date +%H:%M:%S)" "$C_OFF" \
+      printf '\n %s%s%s %s(%s · %s)%s %s\n\n' "$C_LIVE$C_BOLD" "$(_t '▸ TASK')" "$C_OFF" "$C_MUTED" "$src" "$(date +%H:%M:%S)" "$C_OFF" \
         "$(truncate_cols "${task//$'\n'/ }" $(( W - 20 )))"
       bus_event started "$session" "$src" "$task"
       build_daemon_turn "$session" "$perm" "$task" "$zone" -- "$@"
@@ -261,9 +370,9 @@ _runner_daemon_loop() {
       "${DAEMON_TURN[@]}" || rc=$?
       bus_event completed "$session" "$src" "$task" "$rc"
       if (( rc == 0 )); then
-        printf '\n %s✔ completada%s %s(rc=0)%s\n' "$C_LIVE" "$C_OFF" "$C_MUTED" "$C_OFF"
+        printf '\n %s%s%s %s(rc=0)%s\n' "$C_LIVE" "$(_t '✔ completed')" "$C_OFF" "$C_MUTED" "$C_OFF"
       else
-        printf '\n %s✖ falló%s %s(rc=%d)%s\n' "$C_ERR" "$C_OFF" "$C_MUTED" "$rc" "$C_OFF"
+        printf '\n %s%s%s %s(rc=%d)%s\n' "$C_ERR" "$(_t '✖ failed')" "$C_OFF" "$C_MUTED" "$rc" "$C_OFF"
       fi
     fi
 
@@ -309,13 +418,13 @@ _runner_env() {
 # internal_runner <session> <target_dir> <profile> <oneshot 0|1> <role> <daemon_interval> \
 #                 <perm_mode yolo|plan|ask> -- <agent CMD array...>
 internal_runner() {
-  (( $# >= 7 )) || die "internal_runner: argumentos insuficientes"
+  (( $# >= 7 )) || die "$(_t 'internal_runner: not enough arguments')"
   local session_name=$1 target_dir=$2 profile=${3:-default} oneshot=${4:-0}
   local role=${5:-executor} daemon_interval=${6:-60} perm_mode=${7:-ask}
   shift 7
   [ "${1:-}" = "--" ] && shift
-  (( $# )) || die "internal_runner: falta el comando del agente tras '--'"
-  [ -n "$session_name" ] || die "internal_runner: sesión vacía"
+  (( $# )) || die "$(_t "internal_runner: missing the agent command after '--'")"
+  [ -n "$session_name" ] || die "$(_t 'internal_runner: empty session')"
   [[ "$oneshot" =~ ^[01]$ ]] || oneshot=0
 
   # Defensive: the entrypoint is expected to call prama_init first (config + providers.env).
@@ -326,7 +435,7 @@ internal_runner() {
   trap '_runner_cleanup; exit 130' INT TERM HUP
 
   type restore_locale >/dev/null 2>&1 && restore_locale
-  cd "$target_dir" 2>/dev/null || _runner_fatal "El directorio de trabajo no existe: $target_dir"
+  cd "$target_dir" 2>/dev/null || _runner_fatal "$(_t 'The working directory does not exist: %s' "$target_dir")"
   export PRAMA_SESSION="$session_name" PRAMA_ROLE="$role"
   local sf; sf=$(state_file "$session_name")
   export PRAMA_SL_CACHE="${sf%.env}.sl"   # status line throttle cache (see bin/prama-agent)
@@ -337,7 +446,7 @@ internal_runner() {
   # first so a missing key shows an error box instead of silently closing the pane.
   local perr
   if ! perr=$( (apply_provider_profile "$profile") 2>&1 ); then
-    _runner_fatal "Perfil '$profile': $(strip_ansi "${perr//$'\n'/ }")"
+    _runner_fatal "$(_t "Profile '%s': %s" "$profile" "$(strip_ansi "${perr//$'\n'/ }")")"
   fi
   apply_provider_profile "$profile"
 
@@ -367,11 +476,11 @@ internal_runner() {
       set -- "${CMD[@]}"
       profile=$(state_get "$session_name" PROFILE default) perm_mode=$(state_get "$session_name" PERM "$perm_mode")
       if perr=$( (apply_provider_profile "$profile") 2>&1 ); then apply_provider_profile "$profile"
-      else printf ' %s✖ Perfil %s: %s%s\n' "$C_ERR" "$profile" "$(strip_ansi "${perr//$'\n'/ }")" "$C_OFF"; fi
+      else printf ' %s✖ %s%s\n' "$C_ERR" "$(_t 'Profile %s: %s' "$profile" "$(strip_ansi "${perr//$'\n'/ }")")" "$C_OFF"; fi
       if [ "$perm_mode" = "yolo" ]; then export IS_SANDBOX=1; else unset IS_SANDBOX; fi
       _runner_env "$session_name" "$agent" "$perm_mode" "$role" "$zone"
       health_set "$session_name" HEALTH=ok REASON= DETAIL=
-      printf '\n %s↻ Reiniciando con la nueva configuración%s %s\n\n' "$C_NEON$C_BOLD" "$C_OFF" \
+      printf '\n %s%s%s %s\n\n' "$C_NEON$C_BOLD" "$(_t '↻ Restarting with the new configuration')" "$C_OFF" \
         "$(state_get "$session_name" MODEL)${PRESET:+ · preset $PRESET}"
       bus_event restarted "$session_name" "$session_name" "model=$(state_get "$session_name" MODEL) preset=$PRESET"
     fi
@@ -379,11 +488,11 @@ internal_runner() {
     local pending
     pending=$(queue_len "$session_name")
     box_top "✦ $PRAMA_BRAND // $session_name" "RUN #$run_count" "$C_BORDER_HI"
-    box_row "$C_BORDER_HI" "$(role_badge "$role") · ${C_NEON}$agent${C_OFF} · perfil ${C_NEON}$profile${C_OFF} · permisos ${C_BRASS}${perm_mode^^}${C_OFF} · ${C_PURP}⎇ $(_runner_branch "$target_dir")${C_OFF}"
+    box_row "$C_BORDER_HI" "$(role_badge "$role") · ${C_NEON}$agent${C_OFF} · $(_t 'profile %s · permissions %s' "${C_NEON}$profile${C_OFF}" "${C_BRASS}${perm_mode^^}${C_OFF}") · ${C_PURP}⎇ $(_runner_branch "$target_dir")${C_OFF}"
     if (( pending > 0 )); then
-      box_row "$C_BORDER_HI" "${C_BRASS}▲ $pending tarea(s) en cola:${C_OFF} prama-agent bus inbox $session_name"
+      box_row "$C_BORDER_HI" "${C_BRASS}$(_t '▲ %d queued task(s):' "$pending")${C_OFF} prama-agent bus inbox $session_name"
     fi
-    box_bottom "$PRAMA_MENU_KEY menú · rueda/Ctrl+b [ scroll · $target_dir" "$C_BORDER_HI"
+    box_bottom "$(_t '%s menu · wheel/Ctrl+b [ scroll · %s' "$PRAMA_MENU_KEY" "$target_dir")" "$C_BORDER_HI"
     printf '\n'
 
     exit_code=0
@@ -403,26 +512,28 @@ internal_runner() {
       if (( show_menu )); then
         refresh_dimensions
         printf '\n'
-        box_top "▲ AGENTE FINALIZADO" "código $exit_code" "$C_BRASS"
-        box_row "$C_BRASS" "${C_MUTED}El scrollback de esta sesión se conserva ($session_name).${C_OFF}"
+        box_top "$(_t '▲ AGENT EXITED')" "$(_t 'code %d' "$exit_code")" "$C_BRASS"
+        box_row "$C_BRASS" "${C_MUTED}$(_t "This session's scrollback is kept (%s)." "$session_name")${C_OFF}"
         box_sep "$C_BRASS"
-        box_row "$C_BRASS" "${C_LIVE}${C_BOLD}[↵/r]${C_OFF} Relanzar   ${C_NEON}${C_BOLD}[s]${C_OFF} Shell en zona   ${C_PURP}${C_BOLD}[m]${C_OFF} Volver al menú   ${C_ERR}${C_BOLD}[q]${C_OFF} Cerrar"
+        local a_r a_s a_m a_q
+        _tv a_r 'Relaunch'; _tv a_s 'Shell in zone'; _tv a_m 'Back to the menu'; _tv a_q 'Close'
+        box_row "$C_BRASS" "${C_LIVE}${C_BOLD}[↵/r]${C_OFF} $a_r   ${C_NEON}${C_BOLD}[s]${C_OFF} $a_s   ${C_PURP}${C_BOLD}[m]${C_OFF} $a_m   ${C_ERR}${C_BOLD}[q]${C_OFF} $a_q"
         box_bottom "STANDBY" "$C_BRASS"
         show_menu=0
       fi
-      printf ' ⌘ Acción [r/s/m/q]: %sPRAMA_STANDBY%s' "$C_DIM" "$C_OFF"
+      printf ' %s %sPRAMA_STANDBY%s' "$(_t '⌘ Action [r/s/m/q]:')" "$C_DIM" "$C_OFF"
       printf '\e[%dD' 13   # park the cursor before the (dim) marker
       local act=''
       IFS= read -r -n1 act || { _runner_cleanup; exit 0; }
       printf '\n'
       case "$act" in
         ''|r|R)
-          printf ' ↻ Relanzando agente...\n\n'
+          printf ' %s\n\n' "$(_t '↻ Relaunching the agent...')"
           _runner_title "$session_name" "$(role_badge "$role") · $agent · $session_name"
           break
           ;;
         s|S)
-          printf ' ▸ Shell en %s (escribe "exit" para volver al supervisor)\n' "$target_dir"
+          printf ' %s\n' "$(_t '▸ Shell in %s (type "exit" to return to the supervisor)' "$target_dir")"
           "${SHELL:-/bin/bash}" -l || true
           show_menu=1
           ;;

@@ -64,18 +64,20 @@ _bus_confirm() {
     tui_confirm "$q"
     return
   fi
-  IFS= read -r -p " $q [s/N] " a || return 1
+  local yn; _tv yn '[y/N]'
+  IFS= read -r -p " $q $yn " a || return 1
   [[ "$a" =~ ^[sSyY] ]]
 }
 
 _bus_pause() {
   [ -t 0 ] || return 0
-  printf '\n %sPulsa cualquier tecla para volver…%s' "$C_MUTED" "$C_OFF"
+  printf '\n %s%s%s' "$C_MUTED" "$(_t 'Press any key to go back…')" "$C_OFF"
   IFS= read -rsn1 _ || true
   printf '\n'
 }
 
-_bus_notify() { type telegram_notify >/dev/null 2>&1 && telegram_notify "$1" >/dev/null 2>&1; return 0; }
+# _bus_notify <text> [kind] [session] — see telegram_notify (bus traffic is "info")
+_bus_notify() { type telegram_notify >/dev/null 2>&1 && telegram_notify "$1" "${2:-info}" "${3:-}" >/dev/null 2>&1; return 0; }
 
 # ── Session inspection ──────────────────────────────────────────────────────
 bus_session_state() {
@@ -141,7 +143,7 @@ resolve_bus_target() {
     _bus_find_role "$target" "$(_bus_sender)"
     if [ -n "$BUS_ROLE_BEST" ]; then
       BUS_TARGET=$BUS_ROLE_BEST BUS_TARGET_KIND=role
-      (( BUS_ROLE_COUNT > 1 )) && BUS_TARGET_NOTE="Hay $BUS_ROLE_COUNT sesiones con rol '$target'; se eligió la más reciente: $BUS_TARGET"
+      (( BUS_ROLE_COUNT > 1 )) && _tv BUS_TARGET_NOTE "There are %d sessions with role '%s'; picked the most recent: %s" "$BUS_ROLE_COUNT" "$target" "$BUS_TARGET"
       return 0
     fi
   fi
@@ -222,6 +224,27 @@ _bus_render_event() {
 
 # ── Subcommand: bus ─────────────────────────────────────────────────────────
 _bus_usage() {
+  case $PRAMA_UI_LANG in
+    es) _bus_usage_es ;;
+    *)  _bus_usage_en ;;
+  esac
+}
+
+_bus_usage_en() {
+  cat <<EOF
+Usage: prama-agent bus <action>
+  status [N]                     Live agents (role, state, queue) and the last N events (def. 8)
+  assign <session|role> "<task>" Sends a task (role: coordinator|executor|reader|daemon)
+  report "<summary>"             Logs a result and notifies the coordinator
+  broadcast "<message>"          Sends a message to every ready agent (daemons: queued)
+  inbox [session] [--pop]        Lists (or takes) the pending tasks of a queue
+  watch                          Live view of the bus events (Ctrl-C to exit)
+  clear [-y|--yes]               Empties the event log and every queue
+  swarm-start [zone] [coord] [exec]  (compatibility) use: prama-agent swarm <zone> --workers agy:3
+EOF
+}
+
+_bus_usage_es() {
   cat <<EOF
 Uso: prama-agent bus <acción>
   status [N]                     Agentes vivos (rol, estado, cola) y últimos N eventos (def. 8)
@@ -248,7 +271,7 @@ subcmd_bus() {
     clear)                _bus_clear "$@" ;;
     swarm-start|swarm)    _bus_swarm_start "$@" ;;
     help|-h|--help)       _bus_usage ;;
-    *) _bus_usage >&2; die "Acción de bus desconocida: '$action'" ;;
+    *) _bus_usage >&2; die "$(_t "Unknown bus action: '%s'" "$action")" ;;
   esac
 }
 
@@ -263,11 +286,13 @@ _bus_status() {
   local dw=$(( inner - nw - rw - sw - qw - 4 ))
 
   printf '\n'
-  box_top "☍ BUS MULTI-AGENTE" "$(date +%H:%M:%S)" "$bc"
+  local h_s h_r h_st h_q h_d
+  _tv h_s 'SESSION'; _tv h_r 'ROLE'; _tv h_st 'STATE'; _tv h_q 'QUEUE'; _tv h_d 'DIRECTORY'
+  box_top "$(_t '☍ MULTI-AGENT BUS')" "$(date +%H:%M:%S)" "$bc"
   if (( dw >= 6 )); then
-    box_row "$bc" "${C_MUTED}$(_bus_cell SESIÓN "$nw") $(_bus_cell ROL "$rw") $(_bus_cell ESTADO "$sw") $(_bus_cell COLA "$qw") DIRECTORIO${C_OFF}"
+    box_row "$bc" "${C_MUTED}$(_bus_cell "$h_s" "$nw") $(_bus_cell "$h_r" "$rw") $(_bus_cell "$h_st" "$sw") $(_bus_cell "$h_q" "$qw") $h_d${C_OFF}"
   else
-    box_row "$bc" "${C_MUTED}$(_bus_cell SESIÓN "$nw") $(_bus_cell ROL "$rw") $(_bus_cell ESTADO "$sw") COLA${C_OFF}"
+    box_row "$bc" "${C_MUTED}$(_bus_cell "$h_s" "$nw") $(_bus_cell "$h_r" "$rw") $(_bus_cell "$h_st" "$sw") $h_q${C_OFF}"
   fi
   box_sep "$bc"
 
@@ -286,12 +311,12 @@ _bus_status() {
     (( dw >= 6 )) && line+=" ${C_MUTED}$(_bus_cell "$(_bus_short_dir "$dir")" "$dw")${C_OFF}"
     box_row "$bc" "$line"
   done < <(prama_sessions)
-  (( count == 0 )) && box_row "$bc" "${C_MUTED}(No hay agentes vivos en el servidor prama)${C_OFF}"
-  (( skipped > 0 )) && box_row "$bc" "${C_BRASS}▲ $skipped sesión(es) con nombre no válido ignoradas${C_OFF}"
+  (( count == 0 )) && box_row "$bc" "${C_MUTED}$(_t '(No live agents on the prama server)')${C_OFF}"
+  (( skipped > 0 )) && box_row "$bc" "${C_BRASS}$(_t '▲ %d session(s) with an invalid name ignored' "$skipped")${C_OFF}"
 
   local qd
   qd=$(queue_len daemon)
-  (( qd > 0 )) && box_row "$bc" "${C_PURP}♺${C_OFF} Cola compartida de daemons: ${C_BRASS}${C_BOLD}$qd${C_OFF} tarea(s)"
+  (( qd > 0 )) && box_row "$bc" "${C_PURP}♺${C_OFF} $(_t 'Shared daemon queue: %s task(s)' "${C_BRASS}${C_BOLD}$qd${C_OFF}")"
   local orphan_q='' d name
   for d in "$PRAMA_BUS_DIR"/inbox/*/; do
     [ -d "$d" ] || continue
@@ -300,10 +325,10 @@ _bus_status() {
     tmx_has "$name" && continue
     (( $(queue_len "$name") > 0 )) && orphan_q+="$name($(queue_len "$name")) "
   done
-  [ -n "$orphan_q" ] && box_row "$bc" "${C_BRASS}◷${C_OFF} Colas sin sesión viva: ${C_MUTED}$(_bus_clean "$orphan_q")${C_OFF}"
+  [ -n "$orphan_q" ] && box_row "$bc" "${C_BRASS}◷${C_OFF} $(_t 'Queues without a live session: %s' "${C_MUTED}$(_bus_clean "$orphan_q")${C_OFF}")"
 
   box_sep "$bc"
-  box_row "$bc" "${C_LIVE}${C_BOLD}▸ ÚLTIMOS EVENTOS${C_OFF}"
+  box_row "$bc" "${C_LIVE}${C_BOLD}$(_t '▸ LATEST EVENTS')${C_OFF}"
   local ev_file="$PRAMA_BUS_DIR/events.jsonl" shown=0
   local ts ev from to text rc
   if [ -s "$ev_file" ] && (( n > 0 )); then
@@ -312,8 +337,8 @@ _bus_status() {
       (( shown++ ))
     done < <(tail -n "$n" "$ev_file" | _bus_event_records)
   fi
-  (( shown == 0 )) && box_row "$bc" "${C_MUTED}(Sin eventos todavía)${C_OFF}"
-  box_bottom "bus assign <sesión|rol> \"<tarea>\" · bus watch" "$bc"
+  (( shown == 0 )) && box_row "$bc" "${C_MUTED}$(_t '(No events yet)')${C_OFF}"
+  box_bottom "$(_t 'bus assign <session|role> "<task>" · bus watch')" "$bc"
   printf '\n'
 }
 
@@ -321,7 +346,7 @@ _bus_assign() {
   local target=${1:-}
   (( $# )) && shift
   local msg="$*"
-  [ -n "$target" ] && [ -n "$msg" ] || die "Uso: prama-agent bus assign <sesión|rol> \"<instrucción>\""
+  [ -n "$target" ] && [ -n "$msg" ] || die "$(_t 'Usage: prama-agent bus assign <session|role> "<instruction>"')"
   local sender
   sender=$(_bus_sender)
 
@@ -329,18 +354,18 @@ _bus_assign() {
   if [ "$target" = daemon ]; then
     queue_push daemon "$msg"
     bus_event queued "$sender" daemon "$msg"
-    ok "Tarea encolada en la cola compartida de daemons ($(queue_len daemon) pendiente(s))."
-    _bus_notify "📥 [BUS] $sender → daemon (cola): $msg"
+    ok "$(_t 'Task queued in the shared daemon queue (%d pending).' "$(queue_len daemon)")"
+    _bus_notify "$(_t '📥 [BUS] %s → daemon (queue): %s' "$sender" "$msg")"
     return 0
   fi
 
   if ! resolve_bus_target "$target"; then
     if ! valid_session_name "$target" || is_internal_session "$target"; then
-      die "Destino no válido: '$target' (usa un nombre de sesión exacto o un rol: ${BUS_ROLES[*]})"
+      die "$(_t "Invalid target: '%s' (use an exact session name or a role: %s)" "$target" "${BUS_ROLES[*]}")"
     fi
     queue_push "$target" "$msg"
     bus_event queued "$sender" "$target" "$msg"
-    warn "No hay ninguna sesión viva llamada '$target' (ni con ese rol). Tarea guardada en su cola."
+    warn "$(_t "No live session named '%s' (nor with that role). Task saved in its queue." "$target")"
     return 0
   fi
   [ -n "$BUS_TARGET_NOTE" ] && info_msg "$BUS_TARGET_NOTE"
@@ -349,26 +374,26 @@ _bus_assign() {
   if [ "$(session_role "$dest")" = daemon ]; then
     queue_push "$dest" "$msg"
     bus_event queued "$sender" "$dest" "$msg"
-    ok "Tarea encolada para el daemon '$dest' ($(queue_len "$dest") pendiente(s))."
-    _bus_notify "📥 [BUS] $sender → $dest (cola): $msg"
+    ok "$(_t "Task queued for daemon '%s' (%d pending)." "$dest" "$(queue_len "$dest")")"
+    _bus_notify "$(_t '📥 [BUS] %s → %s (queue): %s' "$sender" "$dest" "$msg")"
     return 0
   fi
 
   if bus_can_inject "$dest"; then
-    tmx_send "$dest" "[TAREA DE $sender]: ${msg//$'\n'/ }" || die "No se pudo escribir en '$dest'."
+    tmx_send "$dest" "$(_t '[TASK FROM %s]: %s' "$sender" "${msg//$'\n'/ }")" || die "$(_t "Could not write to '%s'." "$dest")"
     bus_event assign "$sender" "$dest" "$msg"
-    ok "Tarea entregada en vivo a '$dest'."
+    ok "$(_t "Task delivered live to '%s'." "$dest")"
     _bus_notify "📨 [BUS] $sender → $dest: $msg"
   else
     queue_push "$dest" "$msg"
     bus_event queued "$sender" "$dest" "$msg"
-    warn "'$dest' no está listo para recibir texto ($(bus_session_state "$dest")); tarea guardada en su cola."
+    warn "$(_t "'%s' is not ready to receive text (%s); task saved in its queue." "$dest" "$(bus_session_state "$dest")")"
   fi
 }
 
 _bus_report() {
   local msg="$*"
-  [ -n "$msg" ] || die "Uso: prama-agent bus report \"<resumen del resultado>\""
+  [ -n "$msg" ] || die "$(_t 'Usage: prama-agent bus report "<result summary>"')"
   local sender coord=''
   sender=$(_bus_sender)
   # The sender's own coordinator (its team); without a team, the closest coordinator.
@@ -380,23 +405,24 @@ _bus_report() {
   bus_event report "$sender" "${coord:-coordinator}" "$msg"
   if [ -n "$coord" ] && [ "$coord" != "$sender" ]; then
     if bus_can_inject "$coord"; then
-      tmx_send "$coord" "[REPORTE DE $sender]: ${msg//$'\n'/ }" || true
-      ok "Reporte registrado y entregado al coordinador ($coord)."
+      tmx_send "$coord" "$(_t '[REPORT FROM %s]: %s' "$sender" "${msg//$'\n'/ }")" || true
+      ok "$(_t 'Report logged and delivered to the coordinator (%s).' "$coord")"
     else
-      queue_push "$coord" "[REPORTE DE $sender]: $msg"
-      ok "Reporte registrado; el coordinador ($coord) no está listo, quedó en su cola."
+      queue_push "$coord" "$(_t '[REPORT FROM %s]: %s' "$sender" "$msg")"
+      ok "$(_t 'Report logged; the coordinator (%s) is not ready, it was left in its queue.' "$coord")"
     fi
   else
-    ok "Reporte registrado en el bus."
+    ok "$(_t 'Report logged on the bus.')"
   fi
-  _bus_notify "✅ [REPORTE DE $sender]: $msg"
+  _bus_notify "✅ $(_t '[REPORT FROM %s]: %s' "$sender" "$msg")" report "$sender"
 }
 
 _bus_broadcast() {
   local msg="$*"
-  [ -n "$msg" ] || die "Uso: prama-agent bus broadcast \"<mensaje>\""
-  local sender s st sent=0 queued=0 skipped=()
+  [ -n "$msg" ] || die "$(_t 'Usage: prama-agent bus broadcast "<message>"')"
+  local sender s st sent=0 queued=0 skipped=() line
   sender=$(_bus_sender)
+  _tv line '[BROADCAST FROM %s]: %s' "$sender" "${msg//$'\n'/ }"
   while IFS= read -r s; do
     valid_session_name "$s" || continue
     [ "$s" = "$sender" ] && continue
@@ -407,13 +433,13 @@ _bus_broadcast() {
     st=$(bus_session_state "$s")
     case "$st" in
       READY|WORKING)
-        if tmx_send "$s" "[BROADCAST DE $sender]: ${msg//$'\n'/ }"; then (( sent++ )); else skipped+=("$s:ERROR"); fi ;;
+        if tmx_send "$s" "$line"; then (( sent++ )); else skipped+=("$s:ERROR"); fi ;;
       *) skipped+=("$s:$st") ;;
     esac
   done < <(prama_sessions)
   bus_event broadcast "$sender" '*' "$msg"
-  ok "Broadcast: $sent entregado(s) en vivo, $queued encolado(s) a daemons."
-  (( ${#skipped[@]} )) && info_msg "Omitidas (no listas para recibir texto): ${skipped[*]}"
+  ok "$(_t 'Broadcast: %d delivered live, %d queued to daemons.' "$sent" "$queued")"
+  (( ${#skipped[@]} )) && info_msg "$(_t 'Skipped (not ready to receive text): %s' "${skipped[*]}")"
   return 0
 }
 
@@ -426,31 +452,31 @@ _bus_inbox() {
     esac
   done
   [ -n "$target" ] || target=${PRAMA_SESSION:-}
-  [ -n "$target" ] || die "Uso: prama-agent bus inbox <sesión|daemon> [--pop]"
-  valid_session_name "$target" || die "Nombre de cola no válido: '$target'"
+  [ -n "$target" ] || die "$(_t 'Usage: prama-agent bus inbox <session|daemon> [--pop]')"
+  valid_session_name "$target" || die "$(_t "Invalid queue name: '%s'" "$target")"
   if (( pop )); then
-    queue_pop "$target" || { info_msg "La cola de '$target' está vacía."; return 1; }
+    queue_pop "$target" || { info_msg "$(_t "Queue '%s' is empty." "$target")"; return 1; }
     printf '\n'
     return 0
   fi
   local d f i=0
   d=$(queue_dir "$target")
   refresh_dimensions
-  box_top "◷ COLA DE $target" "$(queue_len "$target") pendiente(s)" "$C_BRASS"
+  box_top "$(_t '◷ %s QUEUE' "$target")" "$(_t '%d pending' "$(queue_len "$target")")" "$C_BRASS"
   for f in "$d"/new/*.task; do
     [ -f "$f" ] || continue
     (( i++ ))
     box_row "$C_BRASS" "${C_BOLD}$i.${C_OFF} $(_bus_clean "$(head -c 2000 "$f")")"
   done
-  (( i == 0 )) && box_row "$C_BRASS" "${C_MUTED}(vacía)${C_OFF}"
-  box_bottom "bus inbox $target --pop  extrae la más antigua" "$C_BRASS"
+  (( i == 0 )) && box_row "$C_BRASS" "${C_MUTED}$(_t '(no pending tasks)')${C_OFF}"
+  box_bottom "$(_t 'bus inbox %s --pop  takes the oldest' "$target")" "$C_BRASS"
 }
 
 _bus_watch() {
   local ev_file="$PRAMA_BUS_DIR/events.jsonl"
   [ -f "$ev_file" ] || : >> "$ev_file"
   refresh_dimensions
-  printf ' %s☍ BUS EN VIVO%s %s· Ctrl-C para salir%s\n' "$C_NEON$C_BOLD" "$C_OFF" "$C_MUTED" "$C_OFF"
+  printf ' %s%s%s %s%s%s\n' "$C_NEON$C_BOLD" "$(_t '☍ LIVE BUS')" "$C_OFF" "$C_MUTED" "$(_t '· Ctrl-C to exit')" "$C_OFF"
   local old_trap
   old_trap=$(trap -p INT)
   trap ':' INT
@@ -475,9 +501,9 @@ _bus_clear() {
     case "$a" in -y|--yes) yes=1 ;; esac
   done
   if (( ! yes )); then
-    [ -t 0 ] || die "Sin terminal interactiva: usa 'prama-agent bus clear --yes' para confirmar."
-    _bus_confirm "¿Vaciar el registro de eventos y TODAS las colas de tareas del bus?" \
-      || { info_msg "Cancelado."; return 0; }
+    [ -t 0 ] || die "$(_t "No interactive terminal: use 'prama-agent bus clear --yes' to confirm.")"
+    _bus_confirm "$(_t 'Clear the event log and ALL the task queues of the bus?')" \
+      || { info_msg "$(_t 'Cancelled.')"; return 0; }
   fi
   local ev_file="$PRAMA_BUS_DIR/events.jsonl"
   {
@@ -485,7 +511,7 @@ _bus_clear() {
     : > "$ev_file"
   } 9>>"$ev_file"
   queue_clear
-  ok "Registro de eventos y colas del bus vaciados."
+  ok "$(_t 'Bus event log and queues cleared.')"
 }
 
 # Validates/launches a coordinator + executor pair. Prints the two session names.

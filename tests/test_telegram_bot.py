@@ -9,8 +9,11 @@ import os
 import sys
 import tempfile
 import unittest
+import warnings
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# The tests below check the Spanish texts; the English ones switch with tb.set_lang("en").
+os.environ["PRAMA_UI_LANG"] = "es"
 spec = importlib.util.spec_from_file_location("telegram_bot", os.path.join(HERE, "..", "lib", "telegram_bot.py"))
 tb = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tb)
@@ -68,6 +71,11 @@ class FakePrama(tb.Prama):
                                    "agent": d["agent"], "zone": d["zone"]} for d in self.fleet_rows]), ""
         if args[:3] == ["feedback", "list", "--json"]:
             return 0, '[{"id":"20261031-120000-abcd","kind":"bug","from":"%s","count":3,"summary":"fleet <model> fails"}]' % COORD, ""
+        if args[:2] == ["memory", "show"]:
+            return 0, '[{"scope":"zone","ts":"2026-11-01 10:00","by":"operator","text":"API uses <FastAPI>"},' \
+                      '{"scope":"team","ts":"2026-11-01 11:00","by":"%s","text":"JWT rotates daily"}]' % SEC, ""
+        if args[:3] == ["telegram", "alerts", "--porcelain"]:
+            return 0, "important|0\n", ""
         if args[0] == "swarm" and args[1] == "stop":
             gone = {args[2]} | {d["session"] for d in self.fleet_rows if d.get("parent") == args[2]}
             self.fleet_rows = [d for d in self.fleet_rows if d["session"] not in gone]
@@ -229,6 +237,124 @@ class Security(unittest.TestCase):
         bot.on_text("/send ;rm hola")
         self.assertIn("⚠️", api.last_text())
         self.assertFalse([a for a in prama.ran if a[0] == "send"])
+
+
+class AlertsDaemonsMemory(unittest.TestCase):
+    def test_alerts_view_lists_blocked_and_quota_with_actions(self):
+        fleet = FLEET + [{"session": "prama-agy-landing", "agent": "agy", "zone": "landing", "role": "executor",
+                          "state": "BLOCKED", "blocked_reason": "login", "blocked_detail": "Sign in <again>",
+                          "parent": "operator", "queue": 3, "quota": None}]
+        bot, api, _ = make_bot(fleet)
+        bot.on_text("/alertas")
+        text = api.last_text()
+        self.assertIn("prama-agy-landing", text)
+        self.assertIn("bloqueado (login)", text)
+        self.assertIn("&lt;again&gt;", text)
+        self.assertIn("cuota al 93%", text)              # prama-agy-backend
+        self.assertNotIn(COORD + "</code>", text)
+        self.assertIn("r:prama-agy-landing", api.last_kb())
+
+    def test_menu_counts_agents_that_need_attention(self):
+        bot, api, _ = make_bot()
+        bot.on_text("/menu")
+        self.assertIn("1 agente(s) necesitan atención", api.last_text())
+        self.assertIn("A", api.last_kb())
+
+    def test_daemon_queue_takes_the_next_text(self):
+        fleet = FLEET + [{"session": "prama-daemon-agy-backend", "agent": "agy", "zone": "backend",
+                          "role": "daemon", "state": "DAEMON", "parent": "operator", "queue": 1, "quota": None}]
+        bot, api, prama = make_bot(fleet)
+        bot.on_text("/daemons")
+        self.assertIn("prama-daemon-agy-backend", api.last_text())
+        bot.on_callback("dq:prama-daemon-agy-backend", 7)
+        bot.on_text("revisar dependencias")
+        self.assertIn(["bus", "assign", "prama-daemon-agy-backend", "revisar dependencias"], prama.ran)
+        self.assertIn("En cola", api.last_text())
+
+    def test_team_memory_view_and_note(self):
+        bot, api, prama = make_bot()
+        bot.on_callback("T:" + SEC, 7)
+        self.assertIn("M:" + SEC, api.last_kb())
+        bot.on_callback("M:" + SEC, 7)
+        self.assertIn("JWT rotates daily", api.last_text())
+        self.assertIn("&lt;FastAPI&gt;", api.last_text())
+        bot.on_callback("Mn:" + SEC, 7)
+        bot.on_text("usar Argon2")
+        self.assertIn(["memory", "add", SEC, "usar Argon2"], prama.ran)
+
+    def test_notification_level_and_mute(self):
+        bot, api, prama = make_bot()
+        bot.on_text("/avisos")
+        self.assertIn("lo importante", api.last_text())
+        bot.on_callback("Nl:alerts", 7)
+        self.assertIn(["telegram", "alerts", "alerts"], prama.ran)
+        bot.on_text("/silencio 8h")
+        self.assertIn(["telegram", "mute", "8h"], prama.ran)
+        bot.on_callback("Nl:rm -rf", 7)
+        self.assertFalse([a for a in prama.ran if a[:2] == ["telegram", "alerts"] and a[2:] == ["rm -rf"]])
+
+
+class Language(unittest.TestCase):
+    def setUp(self):
+        tb.set_lang("en")
+
+    def tearDown(self):
+        tb.set_lang("es")
+
+    def test_english_teams_view(self):
+        bot, api, _ = make_bot()
+        bot.on_text("/teams")
+        text, kb = api.last_text(), api.last_kb()
+        self.assertIn("👥 Teams", text)
+        self.assertIn("backend · seguridad", text)        # team names are data, never translated
+        self.assertIn("T:" + COORD, kb)                   # callback data is unchanged
+        self.assertNotIn("Equipos", text)
+
+    def test_spanish_commands_still_work_in_english(self):
+        bot, api, _ = make_bot()
+        bot.on_text("/equipos")
+        self.assertIn("👥 Teams", api.last_text())
+        bot.on_text("/cuota")
+        self.assertIn("Quota per agent", api.last_text())
+        self.assertIn("no data yet", api.last_text())
+        bot.on_text("/reports")
+        self.assertIn("bug reports", api.last_text())
+
+    def test_english_help_and_command_menu(self):
+        bot, api, _ = make_bot()
+        bot.on_text("/help")
+        self.assertIn("/teams — teams", api.last_text())
+        self.assertEqual([c["command"] for c in bot.command_menu()][5:8], ["teams", "quota", "reports"])
+        tb.set_lang("es")
+        bot.on_text("/help")
+        self.assertIn("/equipos — equipos", api.last_text())
+        menu = bot.command_menu()
+        self.assertEqual([c["command"] for c in menu][5:8], ["equipos", "cuota", "reportes"])
+        self.assertEqual(menu[0]["description"], "Menú principal")
+
+    def test_english_team_creation_progress(self):
+        bot, api, _ = make_bot()
+        bot.on_callback("wg:backend:docs:agy:2", 7)
+        sent = [p["text"] for m, p in api.calls if m in ("sendMessage", "editMessageText")]
+        self.assertIn("⏳ Creating team <b>docs</b> in <b>backend</b> with <b>2 agy</b>…", sent)
+        self.assertIn("Type the goal", api.last_text())
+
+    def test_unknown_language_falls_back_to_english(self):
+        tb.set_lang("xx")
+        self.assertEqual(tb._("<i>No active agents.</i>"), "<i>No active agents.</i>")
+        tb.set_lang("../es")
+        self.assertEqual(tb.UI_LANG, "en")
+
+    def test_every_message_id_has_a_spanish_translation(self):
+        spec_c = importlib.util.spec_from_file_location("i18n_check", os.path.join(HERE, "..", "tools", "i18n_check.py"))
+        ic = importlib.util.module_from_spec(spec_c)
+        spec_c.loader.exec_module(ic)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ResourceWarning)   # the checker reads files without `with`
+            ids, catalog = ic.py_ids(), ic.py_catalog("es")
+        self.assertGreater(len(ids), 100)
+        errors, unused = ic.check("python", ids, catalog, "es", True)
+        self.assertEqual((errors, unused), (0, 0))
 
 
 if __name__ == "__main__":

@@ -2,12 +2,12 @@
 
 [English](README.md) · **Español**
 
-[![CI](https://github.com/JSNN15/prama-agente/actions/workflows/ci.yml/badge.svg)](https://github.com/JSNN15/prama-agente/actions/workflows/ci.yml)
+[![CI](https://github.com/JSNN15/prama-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/JSNN15/prama-agent/actions/workflows/ci.yml)
 [![Licencia: Apache-2.0](https://img.shields.io/badge/licencia-Apache--2.0-blue.svg)](LICENSE)
 ![bash ≥ 4.4](https://img.shields.io/badge/bash-%E2%89%A5%204.4-4EAA25)
 ![tmux ≥ 3.2](https://img.shields.io/badge/tmux-%E2%89%A5%203.2-1BB91F)
-![Release](https://img.shields.io/github/v/release/JSNN15/prama-agente)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/JSNN15/prama-agente/badge)](https://scorecard.dev/viewer/?uri=github.com/JSNN15/prama-agente)
+![Release](https://img.shields.io/github/v/release/JSNN15/prama-agent)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/JSNN15/prama-agent/badge)](https://scorecard.dev/viewer/?uri=github.com/JSNN15/prama-agent)
 
 **Plano de control en la terminal para agentes de código.** prama-agent lanza, supervisa y coordina
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) y Google Antigravity (`agy`) en varios
@@ -19,18 +19,35 @@ bloqueado por un login, una cuota o un problema de facturación.
 Es bash sobre un servidor tmux dedicado: sin daemon que instalar, sin base de datos, sin Node.js.
 
 ```
- ◆ PRAMA AGENT v6.3.0  server-01                   ● 3 activos · 1 trabajando   LOAD 1.63 · RAM 21%
+ ◆ PRAMA AGENT v6.4.0  server-01                         ● 6 activos   LOAD 1.63 · RAM 5120M (21%)
  Próximo agente ›  o  Rol ✦ executor   y  Permisos ● ASK   e  Remoto off   p  Perfil default
-╭─ Sesiones ───────────────────────────────── 3 ─╮╭─ ◉ prama-agy-backend ─────────────────────────╮
-│   ● claude-backend   ❖ coord listo   ▱▱▱▱   0% ││ ✦ executor · ● trabaja · CPU 3% · up 04:12    │
-│ ▸ ● └ agy-backend    ✦ exec  trabaja ▰▰▱▱  54% │├─ en vivo ─────────────────────────────────────┤
-│   ● └ agy-backend-2  ✦ exec  listo   ▱▱▱▱   0% ││ > agrega endpoint /health                     │
-├─ Acciones ─────────────────────────────────────┤│ Thinking… editando src/routes/health.ts       │
-│   ✚ Nuevo agente         claude o agy en zona  ││                                               │
-│   ❖ Nuevo equipo         coordinador + N agen… ││                                               │
-╰────────────────────────────────────────────────╯╰───────────────── ↵ entrar · t tarea · l logs ─╯
-  ↵  entrar  c  cockpit  t  tarea  l  logs  r  reiniciar  x  cerrar  n  nuevo  s  equipo  ?  ayuda
+╭─ Agentes y equipos ──────────────────────── 6 ─╮╭─ ◉ prama-backend-sec-coord ────────────────────╮
+│   ● ▍ backend · docs (1)   listo     ▱▱▱▱   0% ││ ❖ coordinator · ● listo · CPU 0% · 99M · up 0… │
+│   ● └ agy          ✦ exec  listo     ▱▱▱▱   0% ││ ⌂ ~/src/backend  ⎇ main                        │
+│ ▸ ● ▍ backend · sec (2)    listo     ▱▱▱▱   0% ││ ❖ equipo backend · sec · 2 agente(s)  ◎ Audit… │
+│   ● ├ agy          ✦ exec  listo     ▱▱▱▱   0% │├─ en vivo ──────────────────────────────────────┤
+│   ● └ agy-2        ✦ exec  listo     ▱▱▱▱   0% ││  ╭─ ✦ PRAMA AGENT // prama-backend-sec-coord … │
+│   ● claude-web     ✦ exec  listo     ▱▱▱▱   0% ││  │ ❖ COORDINATOR · claude · perfil default · … │
+│                                                ││ —        │                                     │
+│                                                ││  ╰── M-m menú · rueda/Ctrl+b [ scroll · ~/src… │
+├─ Acciones ─────────────────────────────────────┤│                                                │
+│   ✚ Nuevo agente         claude agy en una zo… ││ ╭─ Claude Code ─╮                              │
+│   ❖ Nuevo equipo         coordinador + N agen… ││ > review the JWT rotation in auth/keys.ts      │
+│   ☷ Equipos              2 equipo(s) activos … ││ ⏺ Delegating the key audit to prama-backend-s… │
+│   ▦ Cockpit              ver un equipo en viv… ││                                                │
+│   ➤ Telegram             bot 24/7: controla t… ││                                                │
+│   ✱ Doctor               diagnóstico y repara… ││                                                │
+│   ⚙ Preferencias         idioma Español · tem… ││                                                │
+╰────────────────────────────────────────────────╯╰─── ↵ entrar · t mensaje · + agentes · c cock… ─╯
+  ↵  entrar  t  mensaje  +  agentes  c  cockpit  x  cerrar equipo  m  equipos    ?  ayuda  q  salir
 ```
+
+**Español e inglés, siete temas de color.** Toda la herramienta habla los dos idiomas: el menú, la
+CLI, los prompts de rol de los agentes (así reportan en tu idioma) y el bot de Telegram. Sigue tu
+locale (`es_*` → español), o elige con `prama-agent lang es|en|auto`. `prama-agent theme` muestra los
+temas (midnight, ocean, forest, ember, violet, light para terminales claras, mono de alto contraste);
+pintan el menú, la barra de tmux de cada agente y el inspector fzf. Ambos están también en el menú, en
+**⚙ Preferencias** (`,`), donde al recorrer los temas se previsualizan en vivo.
 
 ## Por qué
 
@@ -54,7 +71,7 @@ la conexión SSH. prama-agent las convierte en una flota supervisada:
 ## Instalación
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agente/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/JSNN15/prama-agent/main/install.sh | sudo bash
 prama-agent setup            # primeros pasos: sesión de los agentes, zonas (carpetas de trabajo), permisos
 ```
 
@@ -62,7 +79,7 @@ prama-agent setup            # primeros pasos: sesión de los agentes, zonas (ca
 equipos, incluyendo el inicio de sesión, los modelos y las zonas.
 
 Sin `sudo` se instala para tu usuario (`~/.local/bin`, `~/.config/prama-agent`). Desde un clon:
-`sudo make install` o `make install`. Para actualizar: `prama-agent update` (o `update v6.3.0`).
+`sudo make install` o `make install`. Para actualizar: `prama-agent update` (o `update v6.4.0`).
 Probado en Ubuntu 22.04 / 24.04 y Debian 12 (tmux 3.2a, 3.3a y 3.4), con cualquier shell de inicio.
 
 Requisitos: bash ≥ 4.4, tmux ≥ 3.2 (3.3+ para los botones táctiles de la barra y el modo celular), git. Recomendados:
@@ -93,18 +110,24 @@ registrar. Mientras no registres ninguna, cada repositorio git bajo `PRAMA_DISCO
 
 | Tecla | Acción | Tecla | Acción |
 | --- | --- | --- | --- |
+La barra inferior muestra siempre las teclas de lo seleccionado (las destructivas en rojo) y `?` abre
+todos los atajos agrupados por tarea:
+
+| Tecla | Acción | Tecla | Acción |
+| --- | --- | --- | --- |
 | `↑↓` `jk` `1-9` | moverse | `↵` | entrar a la sesión / elegir |
 | `n` | nuevo agente (asistente) | `s` | nuevo equipo (coordinador + N agentes) |
-| `c` | cockpit del equipo | `t` | enviar una tarea a la sesión |
+| `m` | **equipos**: cockpit, mensaje, sumar agentes, memoria, cerrar | `+` | sumar agentes al equipo seleccionado |
+| `t` | enviar una tarea (a un coordinador: un mensaje) | `c` | cockpit del equipo |
 | `l` | historial (`less`) | `r` / `x` | reiniciar / cerrar (con confirmación) |
-| `/` | filtrar sesiones | `f` | inspector `fzf` con vista previa |
-| `?` | ayuda | | |
+| `/` | filtrar | `f` | inspector `fzf` con vista previa |
+| `,` | preferencias: idioma, tema, mouse | `?` | ayuda |
 | `o` `y` `e` `p` `w` `g` | rol · permisos · remoto · perfil LLM · worktree · segundo plano | `q` | salir |
 
-Las sesiones se listan por equipo (el coordinador y debajo sus agentes); `x` sobre un coordinador
-cierra el equipo completo. La interfaz se adapta al ancho
-(lista y vista previa lado a lado desde 100 columnas, apiladas en el celular), se refresca cada 2 s y
-admite toques y rueda del ratón.
+Las sesiones se agrupan por equipo: la fila del coordinador es el equipo (`▍ backend · seg (2)`, un
+color por equipo) y sus agentes cuelgan debajo (`├ agy`, `└ agy-2`); `x` sobre un coordinador cierra
+ese equipo y nada más. La interfaz se adapta al ancho (lado a lado desde 100 columnas, apilada en el
+celular), se refresca cada 2 s y admite toques y rueda del ratón.
 
 ## Equipos y cockpit
 
@@ -141,6 +164,27 @@ agente o desde el cockpit:
 
 Las teclas se configuran con `PRAMA_MENU_KEY`, `PRAMA_NAV_KEY` y `PRAMA_COCKPIT_KEY`; los botones
 funcionan con toques en Termius, Blink o cualquier terminal con soporte de mouse.
+
+### Memoria del equipo
+
+Una conversación muere con su agente (un reinicio, un cambio de modelo, una cuota); las decisiones del
+equipo no deberían. Cada equipo tiene una memoria compartida de notas breves y fechadas, y cada zona una
+común a todos sus equipos:
+
+```bash
+prama-agent memory show backend --team seg        # las notas de la zona y luego las del equipo
+prama-agent memory add backend --team seg "Las llaves JWT rotan a diario; nunca loguearlas"
+prama-agent memory add backend --zone-wide "Python 3.12, FastAPI, tests con pytest -q"
+prama-agent memory                                # todas: zona, equipo, notas, último cambio
+```
+
+Los agentes la usan solos: su prompt de rol les pide leerla al empezar y registrar decisiones,
+convenciones y en qué va el trabajo con `prama-agent memory add` (un agente escribe en su propio
+equipo). El brief del coordinador dice cuántas notas hay, así un coordinador reiniciado o un ejecutor
+nuevo retoma donde iba. Las notas quedan en el servidor (`~/.local/state/prama-agent/memory`, modo
+`0700`), redactadas como los reportes de fallos, con las `PRAMA_MEMORY_MAX_LINES` (200) más recientes;
+solo el operador puede borrar una. El menú (**Equipos → Memoria del equipo**) y Telegram
+(**🧠 Memoria**) también las muestran y agregan.
 
 ## Desde el celular
 
@@ -260,9 +304,22 @@ botones y argumentos validados contra listas blancas. Desde el bot puedes:
   agente o cerrar ese equipo (con confirmación). *Nuevo equipo* pide la zona, el equipo (uno existente,
   un nombre sugerido o el tuyo) y los ejecutores (`agy × 1-3`, …), y toma tu siguiente mensaje como
   objetivo.
+- **Alertas** (`/alertas`): los agentes que te necesitan (bloqueados por login, crédito o cuota,
+  detenidos, o sobre el 90 % de una ventana de cuota), cada uno con *ver pantalla*, *reiniciar* y
+  *cerrar*. Las alertas del watchdog también llegan como mensajes con esos botones: actúas con un toque.
+- **Daemons** (`/daemons`): los agentes daemon con su estado y su cola; *encolar tarea* toma tu
+  siguiente mensaje.
+- **Memoria del equipo** (equipo → 🧠 Memoria): las últimas notas del equipo; *agregar nota* toma tu
+  siguiente mensaje.
+- **Avisos** (`/avisos`): elige qué te manda el bot — todo, lo importante (sin tráfico del bus), solo
+  alertas o nada — y `/silencio 1h` (30m, 8h, 24h, off) para recibirlos sin sonido. También desde el
+  servidor: `prama-agent telegram alerts important`, `prama-agent telegram mute 8h`.
 - **Cuota** (`/cuota`): 5 h / 7 d / contexto por agente, marcada al 90 %.
 - **Agentes**: ver pantalla, hablar, lanzar, reiniciar o cerrar; **reportes de fallos** de los
   agentes (`/reportes`).
+
+Los comandos funcionan en ambos idiomas (`/equipos` = `/teams`, `/alertas` = `/alerts`,
+`/silencio` = `/mute`…); el menú y los textos del bot siguen el idioma de la interfaz.
 
 El bot equivale a una terminal remota: protege tu cuenta de Telegram con verificación en dos pasos.
 
@@ -275,7 +332,7 @@ roles traen un canal interno para eso:
 prama-agent feedback "fleet model agy-backend-2 gemini-4-argon-medium: reinició con el modelo anterior"   # agente o tú
 prama-agent feedback list                  # reportes abiertos (también en doctor, el menú y Telegram /reportes)
 prama-agent feedback show <id>             # reporte y contexto: versión, agente, modelo, estado, últimos eventos
-prama-agent feedback export <id> | gh issue create -R JSNN15/prama-agente -t "…" -F -
+prama-agent feedback export <id> | gh issue create -R JSNN15/prama-agent -t "…" -F -
 prama-agent feedback close <id>
 ```
 
@@ -313,6 +370,11 @@ prama-agent claude backend --profile deepseek
 | `PRAMA_MENU_KEY` / `PRAMA_NAV_KEY` / `PRAMA_COCKPIT_KEY` | `M-m` / `M-a` / `M-c` | teclas de navegación en tmux |
 | `PRAMA_COMPACT_COLS` | `100` | clientes más angostos reciben el modo celular |
 | `PRAMA_FEEDBACK_MAX_OPEN` | `50` | reportes abiertos antes de pedir a los agentes que esperen |
+| `PRAMA_LANG` | `auto` | idioma: `es`, `en`, `auto` (según el locale); `prama-agent lang` |
+| `PRAMA_THEME` | `midnight` | tema de color; `prama-agent theme` los lista |
+| `PRAMA_TUI_MOUSE` | `1` | mouse y toques en el menú |
+| `PRAMA_TG_NOTIFY` | `all` | avisos de Telegram: `all`, `important`, `alerts`, `off` (`/avisos` del bot lo reemplaza) |
+| `PRAMA_MEMORY_MAX_LINES` | `200` | notas que guarda cada memoria de equipo / zona |
 | `PRAMA_EXPERIMENTAL` | `0` | habilita agentes experimentales (OpenCode) |
 
 Los **worktrees** (`-w <rama>`) se crean fuera del repositorio
@@ -359,7 +421,7 @@ Arquitectura, invariantes de seguridad y API interna: [docs/ARCHITECTURE.md](doc
 
 ## Autor
 
-Creado y mantenido por **Julian Neira Nova** (Hualpén, Chile) · [@JSNN15](https://github.com/JSNN15).
+Creado y mantenido por **Julian Neira Nova** (Santiago de Chile) · [@JSNN15](https://github.com/JSNN15).
 Si usas prama-agent en tu trabajo, [CITATION.cff](CITATION.cff) tiene la cita.
 
 ## Licencia
