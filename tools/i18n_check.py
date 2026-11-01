@@ -19,8 +19,13 @@ PY_FILES = ["lib/telegram_bot.py"]
 
 SQ = r"'([^']*)'"
 DQ = r'"((?:[^"\\$`]|\\.)*)"'
-SH_RE = re.compile(r"(?<![\w-])_t(?:v\s+[A-Za-z_][A-Za-z0-9_\[\]$]*)?\s+(?:" + SQ + "|" + DQ + r")")
-SH_DYN = re.compile(r"(?<![\w-])_t(?:v\s+\S+)?\s+\"[^\"]*\$")
+# _t <msgid> · _tv <var> <msgid> · TUI helpers that take one argument before the msgid:
+# _tk / _tkr <key> <msgid> (footer keys), _hk <keys> <msgid> (help entries), _hs <msgid> (help titles),
+# _tui_bul <glyph> <msgid> (bullets in the menu's detail panel).
+WRAP = r"(?<![\w-])(?:_t|_hs|(?:_tv|_tk|_tkr|_hk|_tui_bul)\s+(?:'[^']*'|\"[^\"]*\"|[^\s'\"]+))"
+SH_RE = re.compile(WRAP + r"\s+(?:" + SQ + "|" + DQ + r")")
+# A msgid with text and a $ expansion; a lone "$var" (a wrapper passing its argument on) is fine.
+SH_DYN = re.compile(WRAP + r"\s+\"(?!\$\{?[\w@]+\}?\")[^\"]*\$")
 PY_RE = re.compile(r"(?<![\w.])_\(\s*(?:'((?:[^'\\]|\\.)*)'|\"((?:[^\"\\]|\\.)*)\")\s*[,)]")
 PH_RE = re.compile(r"%[-+ #0]*\d*(?:\.\d+)?[sdifxXc%]|\{[a-z_0-9]*\}")
 

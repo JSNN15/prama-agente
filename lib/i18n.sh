@@ -33,15 +33,17 @@ i18n_init() {
   i18n_detect
   [ "$PRAMA_UI_LANG" = "$I18N_LOADED" ] && return 0
   I18N=()
-  local dir f
+  local dir catalog
   dir="$(cd "${BASH_SOURCE[0]%/*}" 2>/dev/null && pwd)/lang/$PRAMA_UI_LANG"
   if [ "$PRAMA_UI_LANG" != en ] && [ -d "$dir" ]; then
-    for f in "$dir"/*.sh; do
+    # Catalogs ship with prama (lib/lang), next to this file; never user or state files.
+    for catalog in "$dir"/*.sh; do
       # shellcheck disable=SC1090
-      [ -f "$f" ] && source "$f"
+      [ -f "$catalog" ] && source "$catalog"
     done
   fi
   I18N_LOADED=$PRAMA_UI_LANG
+  PRAMA_LANG_NAME=$(lang_name "$PRAMA_UI_LANG")
   export PRAMA_UI_LANG
 }
 
