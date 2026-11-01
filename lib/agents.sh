@@ -193,7 +193,7 @@ preset_names() {
 preset_load() {
   local f k v line
   PRESET_KV=() PRESET_DIR=''
-  f=$(preset_find "$1") || { warn "Preset desconocido: '$1'. Disponibles: $(preset_names | tr '\n' ' ')"; return 1; }
+  f=$(preset_find "$1") || { warn "$(_t "Unknown preset: '%s'. Available: %s" "$1" "$(preset_names | tr '\n' ' ')")"; return 1; }
   PRESET_DIR=$(dirname "$f")
   while IFS= read -r line || [ -n "$line" ]; do
     [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
@@ -229,10 +229,10 @@ preset_prompt() {
 # loaded with --plugin-dir without touching the user's ~/.claude.
 _preset_skills_plugin() {
   local src=$1 dst="$PRAMA_STATE_HOME/plugins/preset-$PRESET"
-  [ -d "$src" ] || { warn "SKILLS_DIR no existe: $src" >&2; return 1; }
+  [ -d "$src" ] || { warn "$(_t 'SKILLS_DIR does not exist: %s' "$src")" >&2; return 1; }
   mkdir -p "$dst/.claude-plugin" || return 1
-  printf '{"name":"prama-preset-%s","version":"1.0.0","description":"Skills del preset %s (prama-agent)"}\n' \
-    "$PRESET" "$PRESET" > "$dst/.claude-plugin/plugin.json"
+  printf '{"name":"prama-preset-%s","version":"1.0.0","description":"%s"}\n' \
+    "$PRESET" "$(_t 'Skills from the %s preset (prama-agent)' "$PRESET")" > "$dst/.claude-plugin/plugin.json"
   ln -sfn "$src" "$dst/skills"
   printf '%s' "$dst"
 }
@@ -275,21 +275,21 @@ apply_provider_profile() {
   case "$profile" in
     ""|default|native) return 0 ;;
     openrouter|or)
-      [ -n "${OPENROUTER_API_KEY:-}" ] || die "El perfil 'openrouter' requiere OPENROUTER_API_KEY en providers.env"
+      [ -n "${OPENROUTER_API_KEY:-}" ] || die "$(_t "The '%s' profile requires %s in providers.env" openrouter OPENROUTER_API_KEY)"
       export ANTHROPIC_BASE_URL="${OPENROUTER_ANTHROPIC_URL:-https://openrouter.ai/api}"
       export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
       export ANTHROPIC_API_KEY=""
       [ -n "${OPENROUTER_MODEL:-}" ] && export ANTHROPIC_MODEL="$OPENROUTER_MODEL"
       return 0 ;;
     deepseek)
-      [ -n "${DEEPSEEK_API_KEY:-}" ] || die "El perfil 'deepseek' requiere DEEPSEEK_API_KEY en providers.env"
+      [ -n "${DEEPSEEK_API_KEY:-}" ] || die "$(_t "The '%s' profile requires %s in providers.env" deepseek DEEPSEEK_API_KEY)"
       unset ANTHROPIC_API_KEY
       export ANTHROPIC_BASE_URL="${DEEPSEEK_BASE_URL:-https://api.deepseek.com/anthropic}"
       export ANTHROPIC_AUTH_TOKEN="$DEEPSEEK_API_KEY"
       export ANTHROPIC_MODEL="${DEEPSEEK_MODEL:-deepseek-chat}"
       export ANTHROPIC_SMALL_FAST_MODEL="${DEEPSEEK_FAST_MODEL:-deepseek-chat}" ;;
     glm|zai)
-      [ -n "${GLM_API_KEY:-}" ] || die "El perfil 'glm' requiere GLM_API_KEY en providers.env"
+      [ -n "${GLM_API_KEY:-}" ] || die "$(_t "The '%s' profile requires %s in providers.env" glm GLM_API_KEY)"
       unset ANTHROPIC_API_KEY
       export ANTHROPIC_BASE_URL="${GLM_BASE_URL:-https://open.bigmodel.cn/api/anthropic}"
       export ANTHROPIC_AUTH_TOKEN="$GLM_API_KEY"
@@ -301,7 +301,7 @@ apply_provider_profile() {
       export ANTHROPIC_AUTH_TOKEN="${LOCAL_ROUTER_TOKEN:-local-router}"
       export ANTHROPIC_MODEL="${LOCAL_ROUTER_MODEL:-default}" ;;
     *)
-      die "Perfil desconocido: '$profile'. Usa 'prama-agent profiles' para ver las opciones." ;;
+      die "$(_t "Unknown profile: '%s'. Run 'prama-agent profiles' to see the options." "$profile")" ;;
   esac
 }
 
@@ -321,31 +321,31 @@ worktree_path() {
 provision_worktree() {
   local base_dir=$1 branch=$2 wt_dir
   if ! git -C "$base_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    warn "'$base_dir' no es un repositorio Git; --worktree no es posible."
+    warn "$(_t "'%s' is not a Git repository; --worktree is not possible." "$base_dir")"
     return 1
   fi
   if ! git check-ref-format --branch "$branch" >/dev/null 2>&1; then
-    warn "Nombre de rama inválido: '$branch'"
+    warn "$(_t "Invalid branch name: '%s'" "$branch")"
     return 1
   fi
   wt_dir=$(worktree_path "$base_dir" "$branch")
   if [ ! -d "$wt_dir" ]; then
     mkdir -p "$(dirname "$wt_dir")" || return 1
     if git -C "$base_dir" show-ref --verify --quiet "refs/heads/$branch"; then
-      info_msg "Reutilizando la rama existente '$branch' en $wt_dir" >&2
+      info_msg "$(_t "Reusing the existing branch '%s' in %s" "$branch" "$wt_dir")" >&2
       git -C "$base_dir" worktree add "$wt_dir" "$branch" >&2 \
-        || { warn "No se pudo crear el worktree (¿la rama '$branch' ya está en uso en otro worktree?)"; return 1; }
+        || { warn "$(_t "Could not create the worktree (is branch '%s' already checked out in another worktree?)" "$branch")"; return 1; }
     else
-      info_msg "Creando la rama '$branch' en $wt_dir" >&2
+      info_msg "$(_t "Creating branch '%s' in %s" "$branch" "$wt_dir")" >&2
       git -C "$base_dir" worktree add -b "$branch" "$wt_dir" >&2 \
-        || { warn "No se pudo crear el worktree '$branch'"; return 1; }
+        || { warn "$(_t "Could not create the worktree '%s'" "$branch")"; return 1; }
     fi
   fi
   local f
   for f in $PRAMA_WORKTREE_COPY_FILES; do
     if [ -f "$base_dir/$f" ] && [ ! -e "$wt_dir/$f" ]; then
       cp -p "$base_dir/$f" "$wt_dir/$f" && chmod 600 "$wt_dir/$f" 2>/dev/null
-      info_msg "Copiado '$f' al worktree" >&2
+      info_msg "$(_t "Copied '%s' into the worktree" "$f")" >&2
     fi
   done
   printf '%s' "$wt_dir"
@@ -363,17 +363,17 @@ launch_agent() {
   local agent=$1 zone=$2 role=$3 perm=$4 remote=$5 profile=$6 wt=$7 mode=$8 name=${9:-}
   local dir target_d
 
-  dir=$(zone_dir "$zone") || { warn "La zona '$zone' no está registrada."; return 1; }
-  [ -d "$dir" ] || { warn "El directorio '$dir' de la zona '$zone' no existe."; return 1; }
-  agent_installed "$agent" || { warn "El agente '$agent' no está instalado (no está en PATH)."; return 1; }
-  is_in "$role" "${AVAILABLE_ROLES[@]}" || { warn "Rol inválido: '$role'"; return 1; }
+  dir=$(zone_dir "$zone") || { warn "$(_t "Zone '%s' is not registered." "$zone")"; return 1; }
+  [ -d "$dir" ] || { warn "$(_t "The directory '%s' of zone '%s' does not exist." "$dir" "$zone")"; return 1; }
+  agent_installed "$agent" || { warn "$(_t "Agent '%s' is not installed (not in PATH)." "$agent")"; return 1; }
+  is_in "$role" "${AVAILABLE_ROLES[@]}" || { warn "$(_t "Invalid role: '%s'" "$role")"; return 1; }
   [ "$role" = "reader" ] && perm="plan"
-  is_in "$perm" "${AVAILABLE_PERM_MODES[@]}" || { warn "Modo de permisos inválido: '$perm'"; return 1; }
+  is_in "$perm" "${AVAILABLE_PERM_MODES[@]}" || { warn "$(_t "Invalid permission mode: '%s'" "$perm")"; return 1; }
   ( apply_provider_profile "$profile" ) || return 1
-  if [ -n "$PRESET" ]; then ( preset_load "$PRESET" >/dev/null ) || { warn "Preset desconocido: '$PRESET'"; return 1; }; fi
+  if [ -n "$PRESET" ]; then ( preset_load "$PRESET" >/dev/null ) || { warn "$(_t "Unknown preset: '%s'" "$PRESET")"; return 1; }; fi
 
   [ -n "$name" ] || name=$(session_name_for "$agent" "$zone" "$role" "$wt")
-  valid_session_name "$name" || { warn "Nombre de sesión inválido: '$name' (letras, números, - y _; máx. 48)"; return 1; }
+  valid_session_name "$name" || { warn "$(_t "Invalid session name: '%s' (letters, digits, - and _; max 48)" "$name")"; return 1; }
 
   ensure_tmux_conf
 
@@ -385,7 +385,7 @@ launch_agent() {
     else
       case "$mode" in
         porcelain) printf '%s\n' "$name"; return 0 ;;
-        bg)        info_msg "La sesión '$name' ya está activa (usa --parallel para otra instancia)."; return 0 ;;
+        bg)        info_msg "$(_t "Session '%s' is already running (use --parallel for another instance)." "$name")"; return 0 ;;
         return)    tmx_attach "$name"; return 0 ;;
         *)         tmx_attach "$name" 1 ;;
       esac
@@ -421,10 +421,10 @@ launch_agent() {
 
   # agy reads its hooks at startup, so they must exist before the pane starts.
   if [ "$agent" = agy ] && ! agy_hooks_ensure; then
-    warn "No se pudieron instalar los hooks de agy; su salud se detectará solo por pantalla."
+    warn "$(_t "Could not install agy's hooks; its health will be detected from the screen only.")"
   fi
   tmx new-session -d -s "$name" -x "${COLS:-120}" -y 40 -c "$target_d" "${tmux_env[@]}" "${runner_s% }" \
-    || { warn "tmux no pudo crear la sesión '$name'."; return 1; }
+    || { warn "$(_t "tmux could not create session '%s'." "$name")"; return 1; }
   # Team: given for a coordinator (PRAMA_TEAM), inherited from the coordinator that launches an agent.
   local team=${PRAMA_TEAM:-} parent=${PRAMA_PARENT:-${PRAMA_SESSION:-operator}}
   if [ -z "$team" ] && [ "$parent" != operator ] && [ "$(session_role "$parent")" = coordinator ]; then
@@ -441,11 +441,17 @@ launch_agent() {
     porcelain) printf '%s\n' "$name" ;;
     bg)
       refresh_dimensions
-      box_top "✔ AGENTE EN SEGUNDO PLANO" "$name" "$C_LIVE"
-      box_row "$C_LIVE" "${C_MUTED}Rol        ${C_OFF}$(role_badge "$role")"
-      box_row "$C_LIVE" "${C_MUTED}Permisos   ${C_OFF}$(perm_badge "$perm")   ${C_MUTED}Remote${C_OFF} $([ "$remote" = 1 ] && echo on || echo off)"
-      box_row "$C_LIVE" "${C_MUTED}Perfil LLM ${C_OFF}$profile${AGENT_MODEL:+   ${C_MUTED}Modelo${C_OFF} $AGENT_MODEL}${PRESET:+   ${C_MUTED}Preset${C_OFF} $PRESET}"
-      box_row "$C_LIVE" "${C_MUTED}Directorio ${C_OFF}$target_d"
+      # Labels padded to one column width (11) whatever the language.
+      local l_role l_perm l_prof l_dir l_model
+      _tv l_role 'Role'; _tv l_perm 'Permissions'; _tv l_prof 'LLM profile'; _tv l_dir 'Directory'
+      _tv l_model 'Model'
+      printf -v l_role '%-11s' "$l_role"; printf -v l_perm '%-11s' "$l_perm"
+      printf -v l_prof '%-11s' "$l_prof"; printf -v l_dir '%-11s' "$l_dir"
+      box_top "$(_t '✔ AGENT IN THE BACKGROUND')" "$name" "$C_LIVE"
+      box_row "$C_LIVE" "${C_MUTED}$l_role${C_OFF}$(role_badge "$role")"
+      box_row "$C_LIVE" "${C_MUTED}$l_perm${C_OFF}$(perm_badge "$perm")   ${C_MUTED}Remote${C_OFF} $([ "$remote" = 1 ] && echo on || echo off)"
+      box_row "$C_LIVE" "${C_MUTED}$l_prof${C_OFF}$profile${AGENT_MODEL:+   ${C_MUTED}$l_model${C_OFF} $AGENT_MODEL}${PRESET:+   ${C_MUTED}Preset${C_OFF} $PRESET}"
+      box_row "$C_LIVE" "${C_MUTED}$l_dir${C_OFF}$target_d"
       box_bottom "prama-agent attach $name" "$C_LIVE" ;;
     return) tmx_attach "$name" ;;
     *)      tmx_attach "$name" 1 ;;
@@ -453,9 +459,10 @@ launch_agent() {
 }
 
 perm_badge() {
+  local l
   case "$1" in
     yolo) printf '%s▲ YOLO%s' "$C_ERR$C_BOLD" "$C_OFF" ;;
-    plan) printf '%s◉ PLAN (solo lectura)%s' "$C_NEON" "$C_OFF" ;;
-    *)    printf '%s● ASK (confirma cada acción)%s' "$C_LIVE" "$C_OFF" ;;
+    plan) _tv l '◉ PLAN (read-only)'; printf '%s%s%s' "$C_NEON" "$l" "$C_OFF" ;;
+    *)    _tv l '● ASK (confirm each action)'; printf '%s%s%s' "$C_LIVE" "$l" "$C_OFF" ;;
   esac
 }
