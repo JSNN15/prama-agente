@@ -9,8 +9,11 @@ import os
 import sys
 import tempfile
 import unittest
+import warnings
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# The tests below check the Spanish texts; the English ones switch with tb.set_lang("en").
+os.environ["PRAMA_UI_LANG"] = "es"
 spec = importlib.util.spec_from_file_location("telegram_bot", os.path.join(HERE, "..", "lib", "telegram_bot.py"))
 tb = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tb)
@@ -229,6 +232,69 @@ class Security(unittest.TestCase):
         bot.on_text("/send ;rm hola")
         self.assertIn("⚠️", api.last_text())
         self.assertFalse([a for a in prama.ran if a[0] == "send"])
+
+
+class Language(unittest.TestCase):
+    def setUp(self):
+        tb.set_lang("en")
+
+    def tearDown(self):
+        tb.set_lang("es")
+
+    def test_english_teams_view(self):
+        bot, api, _ = make_bot()
+        bot.on_text("/teams")
+        text, kb = api.last_text(), api.last_kb()
+        self.assertIn("👥 Teams", text)
+        self.assertIn("backend · seguridad", text)        # team names are data, never translated
+        self.assertIn("T:" + COORD, kb)                   # callback data is unchanged
+        self.assertNotIn("Equipos", text)
+
+    def test_spanish_commands_still_work_in_english(self):
+        bot, api, _ = make_bot()
+        bot.on_text("/equipos")
+        self.assertIn("👥 Teams", api.last_text())
+        bot.on_text("/cuota")
+        self.assertIn("Quota per agent", api.last_text())
+        self.assertIn("no data yet", api.last_text())
+        bot.on_text("/reports")
+        self.assertIn("bug reports", api.last_text())
+
+    def test_english_help_and_command_menu(self):
+        bot, api, _ = make_bot()
+        bot.on_text("/help")
+        self.assertIn("/teams — teams", api.last_text())
+        self.assertEqual([c["command"] for c in bot.command_menu()][5:8], ["teams", "quota", "reports"])
+        tb.set_lang("es")
+        bot.on_text("/help")
+        self.assertIn("/equipos — equipos", api.last_text())
+        menu = bot.command_menu()
+        self.assertEqual([c["command"] for c in menu][5:8], ["equipos", "cuota", "reportes"])
+        self.assertEqual(menu[0]["description"], "Menú principal")
+
+    def test_english_team_creation_progress(self):
+        bot, api, _ = make_bot()
+        bot.on_callback("wg:backend:docs:agy:2", 7)
+        sent = [p["text"] for m, p in api.calls if m in ("sendMessage", "editMessageText")]
+        self.assertIn("⏳ Creating team <b>docs</b> in <b>backend</b> with <b>2 agy</b>…", sent)
+        self.assertIn("Type the goal", api.last_text())
+
+    def test_unknown_language_falls_back_to_english(self):
+        tb.set_lang("xx")
+        self.assertEqual(tb._("<i>No active agents.</i>"), "<i>No active agents.</i>")
+        tb.set_lang("../es")
+        self.assertEqual(tb.UI_LANG, "en")
+
+    def test_every_message_id_has_a_spanish_translation(self):
+        spec_c = importlib.util.spec_from_file_location("i18n_check", os.path.join(HERE, "..", "tools", "i18n_check.py"))
+        ic = importlib.util.module_from_spec(spec_c)
+        spec_c.loader.exec_module(ic)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ResourceWarning)   # the checker reads files without `with`
+            ids, catalog = ic.py_ids(), ic.py_catalog("es")
+        self.assertGreater(len(ids), 100)
+        errors, unused = ic.check("python", ids, catalog, "es", True)
+        self.assertEqual((errors, unused), (0, 0))
 
 
 if __name__ == "__main__":
