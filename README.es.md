@@ -18,29 +18,24 @@ bloqueado por un login, una cuota o un problema de facturación.
 
 Es bash sobre un servidor tmux dedicado: sin daemon que instalar, sin base de datos, sin Node.js.
 
-```
- ◆ PRAMA AGENT v6.5.0  server-01                         ● 6 activos   LOAD 1.63 · RAM 5120M (21%)
- Próximo agente ›  o  Rol ✦ executor   y  Permisos ● ASK   e  Remoto off   p  Perfil default
-╭─ Agentes y equipos ──────────────────────── 6 ─╮╭─ ◉ prama-backend-sec-coord ────────────────────╮
-│   ● ▍ backend · docs (1)   listo     ▱▱▱▱   0% ││ ❖ coordinator · ● listo · CPU 0% · 99M · up 0… │
-│   ● └ agy          ✦ exec  listo     ▱▱▱▱   0% ││ ⌂ ~/src/backend  ⎇ main                        │
-│ ▸ ● ▍ backend · sec (2)    listo     ▱▱▱▱   0% ││ ❖ equipo backend · sec · 2 agente(s)  ◎ Audit… │
-│   ● ├ agy          ✦ exec  listo     ▱▱▱▱   0% │├─ en vivo ──────────────────────────────────────┤
-│   ● └ agy-2        ✦ exec  listo     ▱▱▱▱   0% ││  ╭─ ✦ PRAMA AGENT // prama-backend-sec-coord … │
-│   ● claude-web     ✦ exec  listo     ▱▱▱▱   0% ││  │ ❖ COORDINATOR · claude · perfil default · … │
-│                                                ││ —        │                                     │
-│                                                ││  ╰── M-m menú · rueda/Ctrl+b [ scroll · ~/src… │
-├─ Acciones ─────────────────────────────────────┤│                                                │
-│   ✚ Nuevo agente         claude agy en una zo… ││ ╭─ Claude Code ─╮                              │
-│   ❖ Nuevo equipo         coordinador + N agen… ││ > review the JWT rotation in auth/keys.ts      │
-│   ☷ Equipos              2 equipo(s) activos … ││ ⏺ Delegating the key audit to prama-backend-s… │
-│   ▦ Cockpit              ver un equipo en viv… ││                                                │
-│   ➤ Telegram             bot 24/7: controla t… ││                                                │
-│   ✱ Doctor               diagnóstico y repara… ││                                                │
-│   ⚙ Preferencias         idioma Español · tem… ││                                                │
-╰────────────────────────────────────────────────╯╰─── ↵ entrar · t mensaje · + agentes · c cock… ─╯
-  ↵  entrar  t  mensaje  +  agentes  c  cockpit  x  cerrar equipo  m  equipos    ?  ayuda  q  salir
-```
+<p align="center">
+  <img src="docs/img/menu-es.png" alt="El menú de prama-agent: equipos agrupados con sus agentes y la vista en vivo del seleccionado" width="900">
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/img/plan-board-es.png" alt="Tablero del plan en vivo"><br><sub><b>Tablero del plan en vivo</b> — lo que planificó el coordinador, quién tiene cada tarea, qué está estancado o sin verificar.</sub></td>
+    <td width="50%"><img src="docs/img/plan-timeline-es.png" alt="Línea de tiempo del plan"><br><sub><b>Línea de tiempo</b> — el trabajo real de cada agente, lo que queda de lo estimado y las replanificaciones marcadas.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/img/teams-es.png" alt="Acciones de un equipo"><br><sub><b>Equipos</b> — plan, cockpit, mensaje, sumar agentes, memoria, ramas, cerrar.</sub></td>
+    <td><img src="docs/img/plan-html-es.png" alt="Exportación HTML del plan"><br><sub><b>Exportación HTML</b> — <code>prama-agent plan html</code>: tablero, línea de tiempo y tareas en un archivo.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/img/help-es.png" alt="Ayuda de atajos"><br><sub><b>Todos los atajos</b>, agrupados por tarea (<code>?</code>).</sub></td>
+    <td align="center"><img src="docs/img/phone-es.png" alt="En el celular" width="300"><br><sub><b>En el celular</b> — el mismo menú, apilado y con zonas táctiles.</sub></td>
+  </tr>
+</table>
 
 **Español e inglés, siete temas de color.** Toda la herramienta habla los dos idiomas: el menú, la
 CLI, los prompts de rol de los agentes (así reportan en tu idioma) y el bot de Telegram. Sigue tu
@@ -48,6 +43,73 @@ locale (`es_*` → español), o elige con `prama-agent lang es|en|auto`. `prama-
 temas (midnight, ocean, forest, ember, violet, light para terminales claras, mono de alto contraste);
 pintan el menú, la barra de tmux de cada agente y el inspector fzf. Ambos están también en el menú, en
 **⚙ Preferencias** (`,`), donde al recorrer los temas se previsualizan en vivo.
+
+## Cómo encaja todo
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"ui-sans-serif, system-ui","fontSize":"15px","lineColor":"#94a3b8","edgeLabelBackground":"#ffffff","clusterBkg":"#f8fafc","clusterBorder":"#cbd5e1","titleColor":"#334155"}}}%%
+flowchart LR
+  you(["👤 Tú<br/>menú · CLI · Telegram"]):::human
+  subgraph team["Equipo «seg» · zona backend"]
+    direction TB
+    coord["❖ Coordinador<br/>planifica · revisa · integra"]:::coord
+    execs["✦ Ejecutores<br/>cada uno en su rama git"]:::exec
+    coord -- "tareas  [T2]" --> execs
+    execs -- "reportes + evidencia" --> coord
+  end
+  plan[("📋 Plan en vivo")]:::data
+  mem[("🧠 Memoria del equipo")]:::data
+  repo[("⎇ main")]:::repo
+  wd{{"🛡 Watchdog"}}:::guard
+
+  you -- "objetivo" --> coord
+  coord -- "add · done · replan" --> plan
+  team -. "decisiones" .-> mem
+  execs -- "commits" --> repo
+  coord -- "merge --test" --> repo
+  wd -- "vigila" --> team
+  wd -- "estancada · sin evidencia" --> plan
+  wd -- "📱 alertas" --> you
+  plan -- "tablero · línea de tiempo" --> you
+
+  classDef human fill:#f59e0b,stroke:#b45309,color:#fff
+  classDef coord fill:#a855f7,stroke:#7e22ce,color:#fff
+  classDef exec fill:#0ea5e9,stroke:#0369a1,color:#fff
+  classDef data fill:#10b981,stroke:#047857,color:#fff
+  classDef guard fill:#ef4444,stroke:#b91c1c,color:#fff
+  classDef repo fill:#334155,stroke:#0f172a,color:#fff
+```
+
+Una tarea, del plan a `main`:
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"ui-sans-serif, system-ui","actorBkg":"#a855f7","actorTextColor":"#ffffff","actorBorder":"#7e22ce","signalColor":"#475569","signalTextColor":"#0f172a","noteBkgColor":"#fef3c7","noteBorderColor":"#f59e0b","activationBkgColor":"#e0f2fe"}}}%%
+sequenceDiagram
+  autonumber
+  actor Tú
+  participant C as ❖ Coordinador
+  participant P as 📋 Plan
+  participant E as ✦ Ejecutor (su rama)
+  participant G as ⎇ git main
+  participant W as 🛡 Watchdog
+  Tú->>C: swarm backend --team seg --task "Endurecer auth"
+  C->>P: plan add T1…T5 (dependencias, archivos, estimación, verificación)
+  C->>E: bus assign … --task T2
+  Note over P: T2 → en curso (responsable agy)
+  E->>E: código + tests, commits en prama/seg/agy
+  E->>C: bus report "14 passed" --task T2
+  Note over P: T2 → revisión
+  C->>G: worktree merge agy --test "pytest -q"
+  alt los tests pasan
+    G-->>C: integrado en main
+    C->>P: plan done T2 --evidence "pytest 14 passed"
+  else fallan los tests o hay conflicto
+    G-->>C: merge deshecho, main intacta
+    C->>E: corrígelo · worktree sync
+  end
+  W-->>C: T4 lleva 20 min sin actividad
+  W-->>Tú: 📱 alerta con [Ver] [Hablar] [Reiniciar]
+```
 
 ## Por qué
 
@@ -79,7 +141,7 @@ prama-agent setup            # primeros pasos: sesión de los agentes, zonas (ca
 equipos, incluyendo el inicio de sesión, los modelos y las zonas.
 
 Sin `sudo` se instala para tu usuario (`~/.local/bin`, `~/.config/prama-agent`). Desde un clon:
-`sudo make install` o `make install`. Para actualizar: `prama-agent update` (o `update v6.5.0`).
+`sudo make install` o `make install`. Para actualizar: `prama-agent update` (o `update v6.6.0`).
 Probado en Ubuntu 22.04 / 24.04 y Debian 12 (tmux 3.2a, 3.3a y 3.4), con cualquier shell de inicio.
 
 Requisitos: bash ≥ 4.4, tmux ≥ 3.2 (3.3+ para los botones táctiles de la barra y el modo celular), git. Recomendados:
@@ -213,6 +275,58 @@ nuevo retoma donde iba. Las notas quedan en el servidor (`~/.local/state/prama-a
 `0700`), redactadas como los reportes de fallos, con las `PRAMA_MEMORY_MAX_LINES` (200) más recientes;
 solo el operador puede borrar una. El menú (**Equipos → Memoria del equipo**) y Telegram
 (**🧠 Memoria**) también las muestran y agregan.
+
+## El plan en vivo
+
+No deberías tener que preguntarle al coordinador qué está haciendo. Él mantiene el plan del equipo con
+comandos de una línea, prama lo muestra en vivo y el watchdog lo contrasta con lo que los agentes
+hacen de verdad.
+
+```bash
+prama-agent plan add "Rotar las llaves JWT" --deps T1 --est 90m --scope "src/auth/keys.py" --accept "pytest tests/auth"
+prama-agent bus assign prama-backend-seg-agy "Rota las llaves sin downtime" --task T2   # T2 → en curso
+prama-agent bus report "14 passed @3f9c2a1" --task T2                                    # (ejecutor) T2 → revisión
+prama-agent plan done T2 --evidence "pytest tests/auth: 14 passed"
+prama-agent plan replan "La auditoría pide rate limiting primero"                        # r2, queda en el historial
+prama-agent plan backend --team seg            # tablero  ·  plan timeline  ·  plan log  ·  plan html
+```
+
+- **Tablero y línea de tiempo en vivo**: en el cockpit del equipo (un panel propio), en el menú
+  (**Equipos → 📋 Plan**, `v` cambia de vista), en Telegram (equipo → **📋 Plan**) y como archivo HTML
+  autocontenido.
+- **Hecho para planes que cambian**: cada replanificación es una revisión numerada con su motivo,
+  marcada en la línea de tiempo (↻) y en las tareas que tocó (Δ); el historial nunca se reescribe.
+- **Honesto por diseño** (lo que según los estudios importa): una tarea *en curso* cuyo responsable no
+  muestra actividad queda **estancada**, *lista* sin evidencia queda **sin verificar**, dos tareas en
+  curso sobre los mismos archivos quedan **solapadas**, y una cuyas dependencias terminaron y nadie tomó
+  queda **lista para empezar**. El watchdog avisa al coordinador, una vez por hora y tarea.
+- Solo el coordinador (o tú) cambia el plan; un ejecutor mueve su propia tarea (avance, reporte).
+
+Cómo avanza una tarea:
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"ui-sans-serif, system-ui","primaryColor":"#e0f2fe","primaryBorderColor":"#0284c7","primaryTextColor":"#0f172a","lineColor":"#64748b","edgeLabelBackground":"#ffffff"}}}%%
+stateDiagram-v2
+  direction LR
+  [*] --> todo: plan add
+  todo --> doing: bus assign --task · plan start
+  doing --> review: bus report --task
+  review --> doing: se piden cambios
+  review --> done: plan done --evidence
+  doing --> blocked: plan block
+  blocked --> doing: desbloqueada
+  todo --> dropped: plan drop
+  doing --> dropped: plan drop
+  done --> [*]
+  note right of doing
+    el watchdog la marca estancada
+    si su responsable no muestra actividad
+  end note
+  note right of done
+    sin evidencia queda como
+    no verificada hasta tenerla
+  end note
+```
 
 ## Desde el celular
 

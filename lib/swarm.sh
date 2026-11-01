@@ -378,7 +378,12 @@ cockpit_ensure() {
   (( ${#members[@]} )) || { warn "$(_t "No agents in '%s'. Launch a team: prama-agent swarm %s --team <name>" "$zone" "$zone")"; return 1; }
   cs=$(cockpit_session "$zone" "$coord")
   valid_session_name "$cs" || return 1
-  sig="${members[*]}"
+  # The team's plan gets a live pane once it has tasks (part of the signature: it appears by itself).
+  local pcoord=$coord plan_on=0
+  [ -n "$pcoord" ] || pcoord=$(zone_teams "$zone" | head -n 1)
+  if [ -n "$pcoord" ] && declare -F plan_root >/dev/null \
+     && [ -s "$(plan_root)/$(slugify "$zone")/$(team_name "$pcoord")/tasks" ]; then plan_on=1; fi
+  sig="${members[*]} plan=$plan_on"
   ensure_tmux_conf
   if tmx_has "$cs" && [ "$(tmx show-options -qv -t "=$cs" @prama_team 2>/dev/null)" != "$sig" ]; then
     tmx kill-session -t "=$cs" 2>/dev/null   # viewers only
@@ -405,6 +410,11 @@ cockpit_ensure() {
       last=$pane
     done
     local watch_cmd
+    if (( plan_on )); then
+      printf -v watch_cmd '%q ' "$SELF_PATH" plan "$pcoord" watch
+      pane=$(tmx split-window -P -F '#{pane_id}' -t "$last" -c "$dir" "${env_args[@]}" "${watch_cmd% }") \
+        && { tmx select-pane -t "$pane" -T "$(_t '📋 PLAN · live')" 2>/dev/null; last=$pane; }
+    fi
     printf -v watch_cmd '%q ' "$SELF_PATH" bus watch
     pane=$(tmx split-window -P -F '#{pane_id}' -t "$last" -c "$dir" "${env_args[@]}" "${watch_cmd% }") \
       && tmx select-pane -t "$pane" -T "$(_t '☍ BUS · live events')" 2>/dev/null

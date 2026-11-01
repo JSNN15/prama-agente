@@ -77,6 +77,10 @@ class FakePrama(tb.Prama):
         if args[:2] == ["worktree", "status"]:
             return 0, '[{"session":"prama-backend-seguridad-agy","branch":"prama/seguridad/agy","ahead":2,' \
                       '"behind":1,"uncommitted":0,"last":"abc1234 fix <auth>"}]', ""
+        if len(args) >= 3 and args[0] == "plan" and args[2] == "json":
+            return 0, '{"zone":"backend","team":"seguridad","rev":2,"tasks":[' \
+                      '{"id":"T1","status":"done","owner":"prama-backend-seguridad-agy","title":"Audit <login>","evidence":"ok","flags":""},' \
+                      '{"id":"T2","status":"doing","owner":"prama-backend-seguridad-agy","title":"Rotate keys","progress":"40","flags":"stale"}]}', ""
         if args[:3] == ["telegram", "alerts", "--porcelain"]:
             return 0, "important|0\n", ""
         if args[0] == "swarm" and args[1] == "stop":
@@ -284,6 +288,15 @@ class AlertsDaemonsMemory(unittest.TestCase):
         bot.on_callback("Mn:" + SEC, 7)
         bot.on_text("usar Argon2")
         self.assertIn(["memory", "add", SEC, "usar Argon2"], prama.ran)
+
+    def test_team_plan_view(self):
+        bot, api, _ = make_bot()
+        bot.on_callback("P:" + SEC, 7)
+        text = api.last_text()
+        self.assertIn("r2", text)
+        self.assertIn("1 de 2 listas", text)
+        self.assertIn("&lt;login&gt;", text)
+        self.assertIn("sin actividad", text)
 
     def test_team_branches_view(self):
         bot, api, _ = make_bot()

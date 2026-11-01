@@ -547,6 +547,52 @@ assert_not_contains "--shared: no worktrees" "prama/s/" "$out"
 "$BIN" swarm stop iso --team s >/dev/null 2>&1
 "$BIN" zones remove iso >/dev/null 2>&1
 
+section "Team plan: tasks, board, timeline, honesty checks"
+PL="$TMP_ROOT/repos/pl"; mkdir -p "$PL"; git -C "$PL" init -q -b main
+echo x > "$PL/a"; gitc "$PL" add a; gitc "$PL" commit -qm init
+"$BIN" zones add pl "$PL" >/dev/null 2>&1
+"$BIN" swarm pl --team t --workers agy:2 --no-open >/dev/null 2>&1
+CO=tp-pl-t-coord
+out=$(PRAMA_SESSION=$CO "$BIN" plan add "Audit login" --est 45m --scope "src/auth/**" --accept "pytest" 2>&1)
+assert_contains "plan add numbers the tasks" "T1" "$out"
+PRAMA_SESSION=$CO "$BIN" plan add "Rotate keys" --deps T1 --est 1h --scope "src/auth/keys.py" >/dev/null 2>&1
+out=$(PRAMA_SESSION=$CO "$BIN" plan add "Bad" --deps T9 2>&1); rc=$?
+assert_true "Unknown dependencies are refused" "[ $rc -ne 0 ]"
+out=$(PRAMA_SESSION=tp-pl-t-agy "$BIN" plan add "Mine" 2>&1); rc=$?
+assert_true "Executors do not change the plan" "[ $rc -ne 0 ]"
+PRAMA_SESSION=$CO "$BIN" bus assign tp-pl-t-agy "audit it" --task T1 >/dev/null 2>&1
+js=$("$BIN" plan pl --team t json)
+assert_true "bus assign --task starts the task for its owner" "jq -e '.tasks[0].status == \"doing\" and .tasks[0].owner == \"tp-pl-t-agy\"' >/dev/null <<< '$js'"
+assert_true "…and the message carries the task id" "grep -q '\\[T1\\] audit it' '$STATE/bus/events.jsonl'"
+PRAMA_SESSION=tp-pl-t-agy "$BIN" plan set T1 progress=60 >/dev/null 2>&1
+PRAMA_SESSION=tp-pl-t-agy "$BIN" bus report "audit done, 14 tests pass" --task T1 >/dev/null 2>&1
+js=$("$BIN" plan pl --team t json)
+assert_true "bus report --task moves it to review with the evidence" "jq -e '.tasks[0].status == \"review\" and (.tasks[0].evidence | test(\"14 tests\"))' >/dev/null <<< '$js'"
+PRAMA_SESSION=$CO "$BIN" plan start T2 --owner tp-pl-t-agy-2 >/dev/null 2>&1
+out=$(PRAMA_SESSION=$CO "$BIN" plan "done" T2 2>&1)
+assert_contains "done without evidence is flagged" "evidence" "$out"
+assert_true "…as unverified" "$BIN plan pl --team t json | jq -e '.tasks[1].flags | test(\"unverified\")' >/dev/null"
+PRAMA_SESSION=$CO "$BIN" plan replan "scope changed" >/dev/null 2>&1
+assert_eq "replan bumps the revision" "2" "$("$BIN" plan pl --team t json | jq -r .rev)"
+out=$(PRAMA_COLS=140 "$BIN" plan pl --team t)
+assert_contains "Board: columns by status" "REVISIÓN" "$out"
+out=$("$BIN" plan pl timeline --team t)
+assert_contains "Timeline: a lane per owner" "agy" "$out"
+"$BIN" plan pl html "$TMP_ROOT/plan.html" --team t >/dev/null 2>&1
+assert_true "HTML export with an SVG timeline" "grep -q '<svg' '$TMP_ROOT/plan.html' && grep -q 'Rotate keys' '$TMP_ROOT/plan.html'"
+PRAMA_SESSION=$CO "$BIN" plan add "Rate limit" --scope "src/auth/**" >/dev/null 2>&1
+out=$(PRAMA_SESSION=$CO "$BIN" plan start T3 --owner tp-pl-t-agy-2 2>&1)
+PRAMA_SESSION=$CO "$BIN" plan start T1 >/dev/null 2>&1
+out=$(PRAMA_PLAN_STALE_MIN=0 bash -c 'source "'"$REPO_DIR"'/lib/core.sh"; source "'"$REPO_DIR"'/lib/ui.sh"; source "'"$REPO_DIR"'/lib/swarm.sh"; source "'"$REPO_DIR"'/lib/plan.sh"; prama_init >/dev/null; plan_alerts tp-pl-t-coord')
+assert_contains "Watchdog: stale tasks" "sin actividad" "$out"
+assert_contains "…same files in progress" "mismos archivos" "$out"
+assert_contains "…done without evidence" "sin evidencia" "$out"
+"$BIN" cockpit pl --team t --no-attach >/dev/null 2>&1
+assert_true "The cockpit shows the plan live" "$P list-panes -a -F '#{pane_title}' | grep -q 'PLAN'"
+"$BIN" swarm stop pl --team t >/dev/null 2>&1
+assert_true "The plan outlives the team" "$BIN plan pl --team t json | jq -e '.tasks | length == 3' >/dev/null"
+"$BIN" zones remove pl >/dev/null 2>&1
+
 section "Feedback channel (agents report prama bugs)"
 co=$("$BIN" claude alpha --role coordinator --bg --porcelain 2>/dev/null)
 out=$(PRAMA_SESSION=$co OPENROUTER_API_KEY=sk-or-v1-0123456789abcdefghij "$BIN" feedback "fleet model no cambió el modelo; key sk-or-v1-0123456789abcdefghij token=supersecret123" 2>&1)

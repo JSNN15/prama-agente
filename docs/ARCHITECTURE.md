@@ -19,13 +19,14 @@ Internal design reference for contributors (English only). User documentation:
 | `lib/fleet.sh` | `prama-agent fleet …`: spawn/kill/model/edit/restart with guard rails |
 | `lib/feedback.sh` | `prama-agent feedback …`: bug reports from agents and the operator (local, redacted, deduplicated) |
 | `lib/worktrees.sh` | Isolated teams: worker branches (`prama/<team>/<name>`), `worktree status/merge/sync/clean` |
+| `lib/plan.sh` | `prama-agent plan …`: team plans (tasks, revisions, history), board, timeline, HTML, honesty checks |
 | `lib/memory.sh` | `prama-agent memory …`: shared team / zone notes (`$PRAMA_STATE_HOME/memory`) |
 | `lib/prefs.sh` | `lang` and `theme`: apply, save (`_config_set`) and reload the tmux config |
 | `lib/setup.sh` | First steps: `setup` wizard, `login` (agent sign-in status), `zones add/remove/scan` (`zones.conf`) |
 | `lib/telegram.sh` + `lib/telegram_bot.py` | Telegram bridge |
 | `lib/tui.sh` | Interactive full-screen TUI |
 
-Source order: `core.sh` → `ui.sh` → `agents.sh` → `roles.sh` → `bus.sh` → `swarm.sh` → `worktrees.sh` → `health.sh` → `fleet.sh` →
+Source order: `core.sh` → `ui.sh` → `agents.sh` → `roles.sh` → `bus.sh` → `swarm.sh` → `worktrees.sh` → `plan.sh` → `health.sh` → `fleet.sh` →
 `feedback.sh` → `memory.sh` → `setup.sh` → `prefs.sh` → `telegram.sh` → `tui.sh` (`core.sh` sources `i18n.sh`). `--internal-hook` and `--internal-statusline` are fast paths that only source
 `core.sh` + `health.sh`; outside prama panes the hook exits before sourcing anything (agy's hooks are
 global), and the status line reuses its last output for `PRAMA_SL_MIN` seconds using bash builtins only
@@ -76,6 +77,9 @@ creates private dirs).
 18. **The base branch of an isolated team never stays broken.** `worktree merge` needs a clean base
     checkout, aborts on conflict and undoes a merge whose `--test` fails; only the team's coordinator
     or the operator merges. Cleaning never deletes unmerged or uncommitted work.
+19. **The plan is append-only history plus a snapshot.** `tasks` is rewritten under `flock`, `log`
+    only grows, revisions only increase; what an agent claims (status, progress) is shown next to what
+    is observed (activity, evidence), never instead of it.
 
 ## core.sh API
 

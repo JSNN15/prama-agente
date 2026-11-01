@@ -383,6 +383,23 @@ watchdog_tick() {
     [ -n "${seen[$s]:-}" ] || unset 'W_PREV[$s]' 'W_READY[$s]'
   done
   _watch_quota_alerts
+  _watch_plans
+}
+
+# Every minute: each live team's plan, checked against what its agents actually do (lib/plan.sh).
+_watch_plans() {
+  declare -F plan_alerts >/dev/null || return 0
+  local now=${EPOCHSECONDS:-$(date +%s)} c line
+  (( now - ${W_PLAN_AT:-0} >= 60 )) || return 0
+  W_PLAN_AT=$now
+  while IFS= read -r c; do
+    [ "$(session_role "$c")" = coordinator ] || continue
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      deliver_to_session "$c" "$line" || true
+      _watch_log "$c: $line"
+    done < <( plan_alerts "$c" 2>/dev/null )
+  done < <(prama_sessions)
 }
 
 # Quota is per account, not per agent: sessions are grouped by agent/profile and one alert is

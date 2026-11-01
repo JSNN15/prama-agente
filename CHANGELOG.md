@@ -6,6 +6,31 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [6.6.0] - 2026-11-01
+
+### Added
+- **The live plan.** `prama-agent plan` keeps a team's tasks: id, owner, dependencies, estimate,
+  files (scope), how it is checked, progress and evidence. The coordinator writes it with one-line
+  commands (`plan add | start | done | review | block | drop | set | replan`), and
+  `bus assign --task T3` / `bus report --task T3` move tasks as work is handed out and reported.
+  - **Views:** a board by status and a timeline per agent (real work, estimate left, ↻ re-plans),
+    live in the team's cockpit (its own pane), in the menu (Teams → 📋 Plan, `v` switches views), in
+    Telegram (team → 📋 Plan), as `plan watch`, and as a self-contained HTML file (`plan html`).
+  - **Plans that change:** every `replan` is a numbered revision with its reason, kept in an
+    append-only history (`plan log`); tasks changed in the latest revision are marked Δ.
+  - **Honesty checks** (watchdog, once an hour per task): in progress with no activity from its owner
+    (stale), owner gone, done without evidence (unverified), two tasks in progress on the same files,
+    a ready task nobody has. The coordinator is told; the board shows them.
+  - Only the coordinator or the operator changes the plan; an executor reports progress and evidence
+    on its own task. The plan outlives the team (`$PRAMA_STATE_HOME/plans`).
+- Role prompts teach the plan protocol (coordinator) and plan task reports (executors).
+- README: real screenshots (rebuilt by `make screenshots` from a demo fleet) and Mermaid diagrams of
+  how teams, the plan, memory, branches and the watchdog fit together.
+
+### Changed
+- Executors restarted in place keep their team prompt (and branch) like at launch.
+- The agent banner shows `Alt+m` instead of `M-m` and `~` instead of the home path.
+
 ## [6.5.0] - 2026-11-01
 
 ### Added
@@ -44,7 +69,7 @@ All notable changes to this project are documented here. The format follows
   and pane borders of every agent (regenerated and reloaded live) and the fzf inspector.
 - **⚙ Preferences** in the menu (`,`): language, theme (moving through the list previews it live; esc
   restores) and mouse/touch, saved in config.env.
-- **Teams screen** (`m`, ☷ Teams): every team with its agents, how many are working and its objective;
+- **Teams screen** (`m`, ▤ Teams): every team with its agents, how many are working and its objective;
   per team: cockpit, message the coordinator, add agents, read or add to its memory, enter the
   coordinator, close it. `+` on a coordinator adds agents to its team from anywhere in the menu.
 - **Shared team and zone memory**: `prama-agent memory show|add|clear|list` keeps short dated notes per
