@@ -342,6 +342,14 @@ provision_worktree() {
     fi
   fi
   local f
+  # Heavy, rebuildable directories (node_modules, .venv…) can be shared with the main checkout
+  # instead of reinstalled in every worktree: PRAMA_WORKTREE_LINK="node_modules .venv".
+  for f in ${PRAMA_WORKTREE_LINK:-}; do
+    [[ $f == */* || $f == .. || $f == . ]] && continue
+    if [ -d "$base_dir/$f" ] && [ ! -e "$wt_dir/$f" ]; then
+      ln -s "$base_dir/$f" "$wt_dir/$f" && info_msg "$(_t "Linked '%s' from the main checkout" "$f")" >&2
+    fi
+  done
   for f in $PRAMA_WORKTREE_COPY_FILES; do
     if [ -f "$base_dir/$f" ] && [ ! -e "$wt_dir/$f" ]; then
       cp -p "$base_dir/$f" "$wt_dir/$f" && chmod 600 "$wt_dir/$f" 2>/dev/null
@@ -397,8 +405,12 @@ launch_agent() {
     target_d=$(provision_worktree "$dir" "$wt") || return 1
   fi
 
-  local role_prompt=""
-  [ "$role" != "executor" ] && role_prompt=$(build_role_system_prompt "$role" "$name" "$zone")
+  local role_prompt="" parent_s=${PRAMA_PARENT:-${PRAMA_SESSION:-}}
+  # A plain executor gets no prompt (it is your own agent); one launched into a team learns the
+  # bus, its coordinator and, in an isolated team, its branch.
+  if [ "$role" != "executor" ] || { [ -n "$parent_s" ] && [ "$(session_role "$parent_s")" = coordinator ]; }; then
+    role_prompt=$(PRAMA_WT_BRANCH=$wt PRAMA_WT_DIR=$target_d build_role_system_prompt "$role" "$name" "$zone")
+  fi
   # A known conversation id lets prama restart the agent in place (new model, preset…) and
   # resume exactly this conversation, even with several agents in the same directory.
   local sid=''

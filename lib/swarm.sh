@@ -63,6 +63,8 @@ Usage: prama-agent swarm <zone> [--team <name>] [options]   coordinator + execut
        --worker-model <m>        executors' model
        --task "<objective>"      initial objective for the coordinator
        --no-open                 do not open the cockpit when done
+       --isolate | --shared      a git worktree and branch per executor (default for a new team in a git
+                                 zone: PRAMA_SWARM_ISOLATE=1) or everyone in the zone folder
      prama-agent swarm list [--json]                         active teams (also: prama-agent teams)
      prama-agent swarm stop <zone> [--team <name>|--all]     closes a team (coordinator and its agents)
      prama-agent swarm stop <coordinator session>
@@ -83,6 +85,8 @@ Uso: prama-agent swarm <zona> [--team <nombre>] [opciones]   coordinador + agent
        --worker-model <m>        modelo de los ejecutores
        --task "<objetivo>"       objetivo inicial para el coordinador
        --no-open                 no abrir el cockpit al terminar
+       --isolate | --shared      un git worktree y una rama por ejecutor (por defecto en un equipo nuevo de
+                                 una zona git: PRAMA_SWARM_ISOLATE=1) o todos en la carpeta de la zona
      prama-agent swarm list [--json]                         equipos activos (también: prama-agent teams)
      prama-agent swarm stop <zona> [--team <nombre>|--all]   cierra un equipo (coordinador y sus agentes)
      prama-agent swarm stop <sesión del coordinador>
@@ -131,6 +135,7 @@ _swarm_list() {
 
 _swarm_start() {
   local zone='' team='' coord_a=claude spec=${PRAMA_SWARM_WORKERS:-agy:2} cmodel='' wmodel='' task='' open=1 m
+  local isolate=''   # '' = the team's setting (new team: PRAMA_SWARM_ISOLATE), 1 = worktrees, 0 = shared
   while (( $# )); do
     case "$1" in
       --team|-T)         team=${2:?$(_t '--team requires a name')}; shift 2
@@ -141,6 +146,8 @@ _swarm_start() {
       --worker-model)    wmodel=${2:?}; valid_model "$wmodel" || die "$(_t "Invalid model: '%s'" "$wmodel")"; shift 2 ;;
       --task|-t)         task=${2:?$(_t '--task requires a text')}; shift 2 ;;
       --no-open)         open=0; shift ;;
+      --isolate|--worktrees) isolate=1; shift ;;
+      --shared)          isolate=0; shift ;;
       --open)            open=1; shift ;;
       -*)                die "$(_t 'Unknown option: %s (prama-agent swarm help)' "$1")" ;;
       *)
@@ -181,24 +188,58 @@ _swarm_start() {
 
   # Session names: the principal team keeps the classic names; other teams carry their name
   # (prama-backend-seguridad-coord, prama-backend-seguridad-agy, …-agy-2).
-  local base=''
+  local base='' zdir tbase=''
   [ "$team" = "$PRAMA_DEFAULT_TEAM" ] || base=$(slugify "${PRAMA_SESSION_PREFIX}-$zone-$team")
+  zdir=$(zone_dir "$zone")
+  # Isolation: a new team takes --isolate/--shared or PRAMA_SWARM_ISOLATE; an existing one keeps its own.
+  if [ -n "$cs" ]; then
+    [ -n "$isolate" ] || isolate=$(state_get "$cs" ISOLATE 0)
+    if (( isolate )) && ! team_isolated "$cs"; then
+      warn "$(_t 'Team "%s" shares the zone folder: new executors join it without worktrees.' "$team")"; isolate=0
+    fi
+  else
+    [ -n "$isolate" ] || isolate=${PRAMA_SWARM_ISOLATE:-1}
+  fi
+  if (( isolate )) && ! git_can_isolate "$zdir"; then
+    warn "$(_t "'%s' is not a git repository with commits on a branch: the team shares the folder (no worktrees)." "$zdir")"
+    isolate=0
+  fi
   if [ -z "$cs" ]; then
-    cs=$(PRAMA_TEAM=$team "$SELF_PATH" "$coord_a" "$zone" --role coordinator --bg --porcelain ${base:+--name "$base-coord"} \
+    (( isolate )) && tbase=$(git -C "$zdir" symbolic-ref --short -q HEAD)
+    cs=$(PRAMA_TEAM=$team PRAMA_TEAM_ISOLATE=$isolate PRAMA_TEAM_BASE=$tbase \
+           "$SELF_PATH" "$coord_a" "$zone" --role coordinator --bg --porcelain ${base:+--name "$base-coord"} \
            ${cmodel:+--model "$cmodel"}) || die "$(_t 'Could not launch the coordinator.')"
+    state_set "$cs" ISOLATE="$isolate" ${tbase:+BASE="$tbase"}
     [ -n "$task" ] && state_set "$cs" OBJECTIVE="$task"
     ok "$(_t "Team \"%s\" in '%s' · coordinator: %s (%s)" "$team" "$zone" "$cs" "$coord_a")"
   else
     info_msg "$(_t "Team \"%s\" in '%s' (%s): the executors join it." "$team" "$zone" "$cs")"
   fi
+  (( isolate )) && { tbase=$(team_base "$cs"); info_msg "$(_t 'Isolated team: each executor gets its own git worktree and branch from %s.' "$tbase")"; }
 
-  local a w members=()
+  local a w name n members=() branches=()
   for a in "${SW_AGENTS[@]}"; do
-    w=$(PRAMA_PARENT=$cs "$SELF_PATH" "$a" "$zone" --role executor --bg --porcelain --parallel \
-          ${base:+--name "$base-$a"} ${wmodel:+--model "$wmodel"}) \
+    # The session name is chosen here (not with --parallel) so the branch can carry it.
+    if [ -n "$base" ]; then name="$base-$a"; else name=$(session_name_for "$a" "$zone" executor ""); fi
+    if tmx_has "$name" || [ -f "$(state_file "$name")" ]; then
+      n=2; while tmx_has "$name-$n" || [ -f "$(state_file "$name-$n")" ]; do (( n++ )); done
+      name="$name-$n"
+    fi
+    local wtargs=()
+    if (( isolate )); then
+      local br; br=$(worker_branch "$team" "$name" "$base")
+      wtargs=(--worktree "$br")
+    fi
+    w=$(PRAMA_PARENT=$cs PRAMA_TEAM_BASE=$tbase "$SELF_PATH" "$a" "$zone" --role executor --bg --porcelain \
+          --name "$name" "${wtargs[@]}" ${wmodel:+--model "$wmodel"}) \
       || { warn "$(_t 'Could not launch a %s executor.' "$a")"; continue; }
     members+=("$w ($a)")
-    ok "$(_t 'Executor: %s (%s)' "$w" "$a")"
+    if (( isolate )); then
+      branches+=("$w → ${wtargs[1]}")
+      ok "$(_t 'Executor: %s (%s) · branch %s' "$w" "$a" "${wtargs[1]}")"
+    else
+      ok "$(_t 'Executor: %s (%s)' "$w" "$a")"
+    fi
   done
 
   # The coordinator learns its team (and the objective) as soon as it is ready: the watchdog
@@ -207,6 +248,9 @@ _swarm_start() {
   [ -n "$who" ] || _tv who '(no executors)'
   _tv brief "[PRAMA] Your team \"%s\" in '%s': %s. Delegate with 'prama-agent bus assign <session> \"<task>\"', check with 'prama-agent fleet status' and add or remove agents with 'prama-agent fleet spawn|kill'." "$team" "$zone" "$who"
   [ -n "$task" ] && brief+=" $(_t 'OBJECTIVE: %s' "$task")"
+  if (( ${#branches[@]} )); then
+    brief+=" $(_t "ISOLATED TEAM: each executor works on its own branch (%s), you stay on %s in the zone folder. See them with 'prama-agent worktree status', review with 'git diff %s...<branch>', integrate with 'prama-agent worktree merge <session>'." "$(IFS=';'; printf '%s' "${branches[*]}")" "$tbase" "$tbase")"
+  fi
   local nm; nm=$(( $(memory_count "$zone" "$team") + $(memory_count "$zone") ))
   (( nm > 0 )) && brief+=" $(_t "TEAM MEMORY: %d note(s), read them first with 'prama-agent memory show'." "$nm")"
   queue_push "$cs" "$brief"
@@ -251,19 +295,40 @@ _swarm_stop() {
         || die "$(_t "Zone '%s' has %d teams (%s): give --team <name> or --all." "$zone" "${#coords[@]}" "$(_swarm_teams_hint "$zone")")"
     fi
   fi
+  # An agent closes only its own team; a coordinator closing its team closes itself last.
+  if [ -n "${PRAMA_SESSION:-}" ]; then
+    local own
+    if [ "$(session_role "$PRAMA_SESSION")" = coordinator ]; then own=$PRAMA_SESSION; else own=$(session_team "$PRAMA_SESSION") || own=''; fi
+    [ "${#coords[@]}" = 1 ] && [ "${coords[0]}" = "$own" ] \
+      || die "$(_t 'An agent can only close its own team (%s).' "${own:-—}")"
+    [ "$own" = "$PRAMA_SESSION" ] || die "$(_t 'Only the coordinator can close the team; ask it with prama-agent bus report.')"
+  fi
   for c in "${coords[@]}"; do _swarm_stop_team "$c"; done
 }
 
 _swarm_stop_team() {
-  local cs=$1 s n=0 label cockpit
+  local cs=$1 s n=0 label cockpit self=0
   label=$(team_label "$cs") cockpit=$(cockpit_session "$(state_get "$cs" ZONE)" "$cs")
+  [ "${PRAMA_SESSION:-}" = "$cs" ] && self=1
+  wt_snapshot_team "$cs"
   while IFS= read -r s; do
     [ "$(state_get "$s" PARENT)" = "$cs" ] || continue
     tmx_kill "$s"; state_remove "$s"; bus_event stopped "${PRAMA_SESSION:-operator}" "$s" "swarm stop"; (( n++ ))
   done < <(prama_sessions)
-  tmx_kill "$cs"; state_remove "$cs"; bus_event stopped "${PRAMA_SESSION:-operator}" "$cs" "swarm stop"
   tmx_kill "$cockpit" 2>/dev/null || true
+  wt_clean_snapshot
   ok "$(_t "Team \"%s\" closed: %s and %d executor(s)." "$label" "$cs" "$n")"
+  bus_event stopped "${PRAMA_SESSION:-operator}" "$cs" "swarm stop"
+  if (( self )); then
+    # This command runs inside the coordinator's own pane: tell the operator, then let tmux close
+    # the session a moment later, from outside this process.
+    declare -F telegram_notify >/dev/null \
+      && telegram_notify "$(_t '🏁 The coordinator closed team "%s" (%d executor(s)).' "$label" "$n")" team >/dev/null 2>&1
+    state_remove "$cs"
+    tmx run-shell -b "sleep 2; tmux -L '$PRAMA_TMUX_SOCKET' kill-session -t '=$cs'" 2>/dev/null || tmx_kill "$cs"
+    return 0
+  fi
+  tmx_kill "$cs"; state_remove "$cs"
 }
 
 # ── Cockpit ─────────────────────────────────────────────────────────────────

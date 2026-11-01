@@ -19,7 +19,7 @@ bloqueado por un login, una cuota o un problema de facturación.
 Es bash sobre un servidor tmux dedicado: sin daemon que instalar, sin base de datos, sin Node.js.
 
 ```
- ◆ PRAMA AGENT v6.4.0  server-01                         ● 6 activos   LOAD 1.63 · RAM 5120M (21%)
+ ◆ PRAMA AGENT v6.5.0  server-01                         ● 6 activos   LOAD 1.63 · RAM 5120M (21%)
  Próximo agente ›  o  Rol ✦ executor   y  Permisos ● ASK   e  Remoto off   p  Perfil default
 ╭─ Agentes y equipos ──────────────────────── 6 ─╮╭─ ◉ prama-backend-sec-coord ────────────────────╮
 │   ● ▍ backend · docs (1)   listo     ▱▱▱▱   0% ││ ❖ coordinator · ● listo · CPU 0% · 99M · up 0… │
@@ -79,7 +79,7 @@ prama-agent setup            # primeros pasos: sesión de los agentes, zonas (ca
 equipos, incluyendo el inicio de sesión, los modelos y las zonas.
 
 Sin `sudo` se instala para tu usuario (`~/.local/bin`, `~/.config/prama-agent`). Desde un clon:
-`sudo make install` o `make install`. Para actualizar: `prama-agent update` (o `update v6.4.0`).
+`sudo make install` o `make install`. Para actualizar: `prama-agent update` (o `update v6.5.0`).
 Probado en Ubuntu 22.04 / 24.04 y Debian 12 (tmux 3.2a, 3.3a y 3.4), con cualquier shell de inicio.
 
 Requisitos: bash ≥ 4.4, tmux ≥ 3.2 (3.3+ para los botones táctiles de la barra y el modo celular), git. Recomendados:
@@ -164,6 +164,34 @@ agente o desde el cockpit:
 
 Las teclas se configuran con `PRAMA_MENU_KEY`, `PRAMA_NAV_KEY` y `PRAMA_COCKPIT_KEY`; los botones
 funcionan con toques en Termius, Blink o cualquier terminal con soporte de mouse.
+
+### Equipos aislados: una rama por agente
+
+Varios agentes editando la misma carpeta se pisan. Por eso un equipo nuevo en una zona git queda
+**aislado**: cada ejecutor trabaja en su propio git worktree (fuera del repositorio) en la rama
+`prama/<equipo>/<nombre>`, creada desde la rama en que está la zona; el coordinador se queda en esa rama
+e integra.
+
+```bash
+prama-agent swarm backend --team seg --workers agy:2        # aislado (por defecto; --shared para no)
+prama-agent worktree status backend --team seg              # cada rama: por integrar, sin commit, atraso
+prama-agent worktree merge prama-backend-seg-agy --test "pytest -q"   # integra; se deshace si fallan los tests
+prama-agent worktree sync prama-backend-seg-agy-2           # pone una rama al día con la base
+```
+
+- `merge` rechaza un checkout base con cambios y **aborta si hay conflicto**: la base nunca queda rota;
+  el ejecutor hace `worktree sync`, resuelve en su worktree, hace commit y el coordinador vuelve a
+  integrar. Con `--test` (o `PRAMA_MERGE_TEST`) un merge que rompe los tests se deshace.
+- Solo el coordinador (o tú) integra; un ejecutor solo hace commit en su rama y se pone al día.
+- Los prompts de rol llevan el protocolo: los ejecutores hacen commit con evidencia y el coordinador
+  reparte por archivos, integra una rama a la vez y pide a los demás ponerse al día.
+- `swarm stop` borra los worktrees limpios e integrados y **conserva** los que tienen trabajo sin
+  integrar o sin commit (`worktree clean` hace lo mismo después).
+- Dependencias: cada worktree es un checkout nuevo. Los `.env` se copian (`PRAMA_WORKTREE_COPY_FILES`);
+  `PRAMA_WORKTREE_LINK="node_modules .venv"` comparte directorios pesados con el checkout principal en
+  vez de reinstalarlos; si no, los ejecutores instalan lo que necesiten.
+- En el menú, el asistente de nuevo equipo pregunta *una rama por agente* o *carpeta compartida*, y
+  **Equipos → Ramas** muestra el estado de cada rama; en Telegram, equipo → **⎇ Ramas**.
 
 ### Memoria del equipo
 
@@ -370,6 +398,9 @@ prama-agent claude backend --profile deepseek
 | `PRAMA_MENU_KEY` / `PRAMA_NAV_KEY` / `PRAMA_COCKPIT_KEY` | `M-m` / `M-a` / `M-c` | teclas de navegación en tmux |
 | `PRAMA_COMPACT_COLS` | `100` | clientes más angostos reciben el modo celular |
 | `PRAMA_FEEDBACK_MAX_OPEN` | `50` | reportes abiertos antes de pedir a los agentes que esperen |
+| `PRAMA_SWARM_ISOLATE` | `1` | equipos nuevos en una zona git: un worktree y una rama por ejecutor |
+| `PRAMA_WORKTREE_LINK` | — | directorios enlazados desde el checkout principal en cada worktree (`node_modules .venv`) |
+| `PRAMA_MERGE_TEST` | — | comando de tests tras cada `worktree merge` (si falla, se deshace el merge) |
 | `PRAMA_LANG` | `auto` | idioma: `es`, `en`, `auto` (según el locale); `prama-agent lang` |
 | `PRAMA_THEME` | `midnight` | tema de color; `prama-agent theme` los lista |
 | `PRAMA_TUI_MOUSE` | `1` | mouse y toques en el menú |

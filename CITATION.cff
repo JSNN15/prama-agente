@@ -9,7 +9,7 @@ authors:
     country: CL
 repository-code: "https://github.com/JSNN15/prama-agent"
 license: Apache-2.0
-version: 6.4.0
+version: 6.5.0
 date-released: 2026-11-01
 keywords:
   - coding agents

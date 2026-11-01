@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [6.5.0] - 2026-11-01
+
+### Added
+- **Isolated teams: a git worktree and branch per executor.** A new team in a git zone (default,
+  `PRAMA_SWARM_ISOLATE=1`; `swarm --shared` opts out) gives each executor its own worktree on
+  `prama/<team>/<name>` from the zone's branch; the coordinator stays on it and integrates with
+  `prama-agent worktree status | merge | sync | clean`. `merge` aborts on conflict and refuses a dirty
+  base, so the base never stays broken; `merge --test "<cmd>"` (or `PRAMA_MERGE_TEST`) undoes a merge
+  that breaks the tests. Only the coordinator or the operator merges. `swarm stop` removes clean,
+  merged worktrees and keeps unmerged or uncommitted work. `PRAMA_WORKTREE_LINK` shares heavy
+  directories (node_modules, .venv) with the main checkout. Menu: isolation step in the new-team
+  wizard, Teams → Branches; Telegram: team → ⎇ Branches.
+- Executors launched into a team now get their role prompt (bus, reports, their branch).
+- Role prompts carry multi-agent practices backed by recent studies: plan with explicit dependencies
+  and disjoint files, done means verified with evidence, announce shared-interface changes, merge one
+  branch at a time with tests, the coordinator coordinates and does not implement.
+- A coordinator can close its own team, itself last (`swarm stop <its session>`), and the operator is
+  notified.
+
+### Fixed
+- `swarm stop` did not check who called it: an agent could close another team. Agents can now close
+  only their own team, and only its coordinator can.
+
 ## [6.4.0] - 2026-11-01
 
 ### Added

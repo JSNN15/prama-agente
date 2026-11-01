@@ -74,6 +74,9 @@ class FakePrama(tb.Prama):
         if args[:2] == ["memory", "show"]:
             return 0, '[{"scope":"zone","ts":"2026-11-01 10:00","by":"operator","text":"API uses <FastAPI>"},' \
                       '{"scope":"team","ts":"2026-11-01 11:00","by":"%s","text":"JWT rotates daily"}]' % SEC, ""
+        if args[:2] == ["worktree", "status"]:
+            return 0, '[{"session":"prama-backend-seguridad-agy","branch":"prama/seguridad/agy","ahead":2,' \
+                      '"behind":1,"uncommitted":0,"last":"abc1234 fix <auth>"}]', ""
         if args[:3] == ["telegram", "alerts", "--porcelain"]:
             return 0, "important|0\n", ""
         if args[0] == "swarm" and args[1] == "stop":
@@ -281,6 +284,16 @@ class AlertsDaemonsMemory(unittest.TestCase):
         bot.on_callback("Mn:" + SEC, 7)
         bot.on_text("usar Argon2")
         self.assertIn(["memory", "add", SEC, "usar Argon2"], prama.ran)
+
+    def test_team_branches_view(self):
+        bot, api, _ = make_bot()
+        bot.on_callback("T:" + SEC, 7)
+        self.assertIn("B:" + SEC, api.last_kb())
+        bot.on_callback("B:" + SEC, 7)
+        text = api.last_text()
+        self.assertIn("prama/seguridad/agy", text)
+        self.assertIn("2 por integrar", text)
+        self.assertIn("&lt;auth&gt;", text)
 
     def test_notification_level_and_mute(self):
         bot, api, prama = make_bot()

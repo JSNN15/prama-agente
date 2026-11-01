@@ -297,6 +297,11 @@ class Prama:
         return [d for d in self.json(["memory", "show", target, "--json"])
                 if isinstance(d, dict) and isinstance(d.get("text"), str)]
 
+    def branches(self, coord):
+        """Worker branches of an isolated team (prama-agent worktree status <coord> --json)."""
+        return [d for d in self.json(["worktree", "status", coord, "--json"])
+                if isinstance(d, dict) and isinstance(d.get("branch"), str)]
+
     def notify_state(self):
         """(level, mute_until) of the Telegram notifications."""
         out = self.ok(["telegram", "alerts", "--porcelain"]).strip()
@@ -639,7 +644,8 @@ class Bot:
         add = [self.b("➕ 1 %s" % a, "ta:%s:%s" % (cs, a)) for a in self.prama.agents()[:3]]
         if add:
             kb.append(add)
-        kb.append([self.b(_("🧠 Memory"), "M:" + cs), self.b(_("🛑 Close team"), "tx:" + cs), self.b("🔄", "T:" + cs)])
+        kb.append([self.b(_("🧠 Memory"), "M:" + cs), self.b(_("⎇ Branches"), "B:" + cs)])
+        kb.append([self.b(_("🛑 Close team"), "tx:" + cs), self.b("🔄", "T:" + cs)])
         kb.append([self.b(_("⬅ Teams"), "T"), self.b(_("☰ Menu"), "m")])
         return "\n".join(lines), kb
 
@@ -788,6 +794,30 @@ class Bot:
         kb = [[self.b(_("✍️ Add a note"), "Mn:" + cs), self.b(_("🔄 Update"), "M:" + cs)],
               [self.b(_("⬅ Team"), "T:" + cs), self.b(_("☰ Menu"), "m")]]
         return "\n".join(lines), kb
+
+    def view_branches(self, cs):
+        """Isolated team: each executor's branch, what is left to merge, uncommitted work."""
+        team = teams_of(self.prama.fleet()).get(cs)
+        if not team:
+            return self.view_teams(_("⚠️ That team no longer exists."))
+        rows = self.prama.branches(cs)
+        lines = [_("<b>⎇ Branches · %s</b>") % e(team_label(team[0])), ""]
+        for d in rows:
+            parts = []
+            if d.get("ahead"):
+                parts.append(_("%d to merge") % d["ahead"])
+            if d.get("uncommitted"):
+                parts.append(_("%d uncommitted") % d["uncommitted"])
+            if d.get("behind"):
+                parts.append(_("%d behind") % d["behind"])
+            lines.append("%s <code>%s</code>\n    %s · <i>%s</i>" % ("↑" if d.get("ahead") else "·", e(d["branch"]),
+                                                                   e(" · ".join(parts) or _("up to date")),
+                                                                   e(str(d.get("last", ""))[:80])))
+        if not rows:
+            lines.append(_("<i>This team shares the zone folder (no branches per agent).</i>"))
+        else:
+            lines += ["", _("The coordinator merges them (prama-agent worktree merge). Ask it from 💬 Talk.")]
+        return "\n".join(lines), [[self.b(_("🔄 Update"), "B:" + cs), self.b(_("⬅ Team"), "T:" + cs)]]
 
     def view_notify(self, note=""):
         level, until = self.prama.notify_state()
@@ -1003,6 +1033,8 @@ class Bot:
                              [[self.b(_("✖ Cancel"), "d")]], edit_id=mid)
         if act == "M":
             return self.send(*self.view_memory(arg), edit_id=mid)
+        if act == "B":
+            return self.send(*self.view_branches(arg), edit_id=mid)
         if act == "Mn":                     # a note for a team's memory: the next text
             self.pending_note, self.pending_queue = arg, ""
             return self.send(_("✍️ Type the note for the team memory (a decision, a convention, a finding)."),

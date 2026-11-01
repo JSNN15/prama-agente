@@ -269,7 +269,7 @@ assert_true "An agent that ignores SIGHUP does not survive 'stop'" "[ -n '$hpid'
 section "Supervised session E2E"
 MOCK_SLEEP=2 "$BIN" claude alpha --bg --role coordinator --name tp-e2e --profile deepseek >/dev/null
 wait_for 5 "$P capture-pane -p -t '=tp-e2e:' | grep -q 'ENV role'"
-out=$("$BIN" capture tp-e2e 40)
+out=$("$BIN" capture tp-e2e 200)
 assert_contains "Agent got role and profile env" "ENV role=coordinator model=deepseek-chat" "$out"
 assert_contains "Coordinator received system prompt" "--append-system-prompt" "$out"
 out=$("$BIN" sessions --json)
@@ -507,6 +507,45 @@ assert_true "…and its cockpit" "! $P has-session -t =tp-cockpit-alpha 2>/dev/n
 "$BIN" bus swarm-start beta claude agy >/dev/null 2>&1
 assert_eq "v5 'bus swarm-start' still works (coordinator + 1 executor)" "2" "$("$BIN" fleet status --json | jq '[.[] | select(.zone=="beta")] | length')"
 "$BIN" stop --all -y >/dev/null 2>&1
+
+section "Isolated teams: a git worktree per executor"
+ISO="$TMP_ROOT/repos/iso"; mkdir -p "$ISO"; git -C "$ISO" init -q -b main
+echo base > "$ISO/app.txt"; gitc "$ISO" add app.txt; gitc "$ISO" commit -qm init
+"$BIN" zones add iso "$ISO" >/dev/null 2>&1
+out=$("$BIN" swarm iso --team t --workers claude:1,agy:1 --no-open 2>&1)
+assert_contains "A new team in a git zone is isolated" "prama/t/claude" "$out"
+assert_true "…each executor in its own worktree" "git -C '$ISO' worktree list | grep -q 'prama/t/agy'"
+assert_true "…outside the repository" "grep -q '^TARGET_DIR=.*/repos/.prama-worktrees/iso/prama-t-claude' '$STATE/bus/state/tp-iso-t-claude.env'"
+wait_for 5 "$P capture-pane -p -J -t '=tp-iso-t-claude:' -S -200 | grep -q 'prama/t/claude'"
+assert_true "The executor's prompt names its branch" "$P capture-pane -p -J -t '=tp-iso-t-claude:' -S -200 | grep -q \"rama 'prama/t/claude'\""
+WT="$TMP_ROOT/repos/.prama-worktrees/iso"
+echo one > "$WT/prama-t-claude/app.txt"; gitc "$WT/prama-t-claude" commit -qam "claude: change"
+out=$("$BIN" worktree status iso --json)
+assert_true "worktree status --json: commits to merge" "jq -e '.[] | select(.session==\"tp-iso-t-claude\") | .ahead == 1' >/dev/null <<< '$out'"
+out=$(PRAMA_SESSION=tp-iso-t-agy "$BIN" worktree merge tp-iso-t-claude 2>&1); rc=$?
+assert_true "An executor cannot merge into the base" "[ $rc -ne 0 ]"
+out=$(PRAMA_SESSION=tp-iso-t-coord "$BIN" worktree merge tp-iso-t-claude --test false 2>&1); rc=$?
+assert_true "merge --test undoes a merge that breaks the tests" "[ $rc -ne 0 ] && [ \"\$(cat '$ISO/app.txt')\" = base ]"
+out=$(PRAMA_SESSION=tp-iso-t-coord "$BIN" worktree merge tp-iso-t-claude --test true 2>&1); rc=$?
+assert_true "The coordinator merges a branch" "[ $rc -eq 0 ] && [ \"\$(cat '$ISO/app.txt')\" = one ]"
+echo two > "$WT/prama-t-agy/app.txt"; gitc "$WT/prama-t-agy" commit -qam "agy: conflicting change"
+out=$(PRAMA_SESSION=tp-iso-t-coord "$BIN" worktree merge tp-iso-t-agy 2>&1); rc=$?
+assert_true "A conflicting merge is aborted" "[ $rc -ne 0 ] && [[ \"\$out\" == *app.txt* ]]"
+assert_eq "…and the base stays clean" "" "$(git -C "$ISO" status --porcelain --untracked-files=no)"
+out=$(PRAMA_SESSION=tp-iso-t-agy "$BIN" worktree sync 2>&1); rc=$?
+assert_true "The executor syncs itself and gets the conflict to resolve" "[ $rc -ne 0 ] && git -C '$WT/prama-t-agy' diff --name-only --diff-filter=U | grep -q app.txt"
+gitc "$WT/prama-t-agy" merge --abort
+out=$(PRAMA_SESSION=tp-iso-t-agy "$BIN" swarm stop tp-iso-t-coord 2>&1); rc=$?
+assert_true "An executor cannot close the team" "[ $rc -ne 0 ]"
+out=$(PRAMA_SESSION=tp-iso-t-coord "$BIN" swarm stop alpha --all 2>&1); rc=$?
+assert_true "A coordinator cannot close another team" "[ $rc -ne 0 ]"
+"$BIN" swarm stop iso --team t >/dev/null 2>&1
+assert_true "swarm stop removes merged worktrees" "! git -C '$ISO' worktree list | grep -q 'prama/t/claude'"
+assert_true "…and keeps unmerged work" "git -C '$ISO' worktree list | grep -q 'prama/t/agy'"
+out=$("$BIN" swarm iso --team s --shared --workers agy:1 --no-open 2>&1)
+assert_not_contains "--shared: no worktrees" "prama/s/" "$out"
+"$BIN" swarm stop iso --team s >/dev/null 2>&1
+"$BIN" zones remove iso >/dev/null 2>&1
 
 section "Feedback channel (agents report prama bugs)"
 co=$("$BIN" claude alpha --role coordinator --bg --porcelain 2>/dev/null)
