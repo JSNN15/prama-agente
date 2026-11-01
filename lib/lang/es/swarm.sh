@@ -53,4 +53,5 @@ I18N+=(
   ['agent › ']='agente › '
   ['↵ go · Esc close']='↵ ir · Esc cerrar'
   ['Number (Enter closes): ']='Número (Enter cierra): '
+  ["TEAM MEMORY: %d note(s), read them first with 'prama-agent memory show'."]="MEMORIA DEL EQUIPO: %d nota(s), léelas primero con 'prama-agent memory show'."
 )

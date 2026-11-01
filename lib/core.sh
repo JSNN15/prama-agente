@@ -775,7 +775,7 @@ detect_session_state() {
   if [ "$s" = "${PRAMA_SESSION_PREFIX}-telegram-bot" ]; then printf 'BOT'; return; fi
   local snippet
   snippet=$(tmx_capture "$s" 12)
-  if [[ "$snippet" == *"PRAMA_STANDBY"* || "$snippet" == *"AGENTE FINALIZADO"* ]]; then printf 'STANDBY'
+  if [[ "$snippet" == *"PRAMA_STANDBY"* || "$snippet" == *"AGENTE FINALIZADO"* || "$snippet" == *"AGENT EXITED"* ]]; then printf 'STANDBY'
   elif [[ "$snippet" == *"PRAMA_DAEMON"* ]]; then printf 'DAEMON'
   elif [[ "$snippet" =~ esc\ to\ interrupt|Esc\ to\ cancel|Thinking|Working|Running…|Synthesizing ]]; then printf 'WORKING'
   elif session_block_info "$s" "$snippet" >/dev/null; then printf 'BLOCKED'

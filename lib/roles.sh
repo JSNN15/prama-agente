@@ -55,6 +55,10 @@ Multi-agent bus commands (run them with your Bash tool):
 - See the pending tasks in your queue:               prama-agent bus inbox $session_name
 - Read another agent's terminal:                     prama-agent logs <session> 80
 - Report a prama-agent bug (not one in your task):   prama-agent feedback "<command, what you expected, what you got>"
+- Team memory (decisions, conventions, findings, where the work stands; it survives restarts and
+  reaches new agents): read it with 'prama-agent memory show' when you start; add a short note with
+  'prama-agent memory add "<note>"' when you decide or learn something durable
+  (--zone-wide for facts every team of the zone needs).
 EOF
 )
   models_help="Models: claude → opus | sonnet | haiku (or a full id); agy → ids from 'prama-agent fleet models agy'
@@ -91,6 +95,8 @@ Fleet management (you manage your agents; everything returns JSON with --json):
 - Restart an agent (e.g. after an error):                prama-agent fleet restart <session>
 - Close an agent you no longer need:                     prama-agent fleet kill <session>
 $models_help
+Keep the team memory current: record each decision, the plan and who does what with
+'prama-agent memory add', so a restarted coordinator or a new agent can pick up the work.
 Close the extra agents when you are done.
 Limit of simultaneous agents: ${PRAMA_FLEET_MAX:-8}.
 EOF
@@ -138,6 +144,10 @@ Comandos del bus multi-agente (ejecútalos con tu herramienta Bash):
 - Ver tareas pendientes en tu cola:                  prama-agent bus inbox $session_name
 - Leer la terminal de otro agente:                   prama-agent logs <sesión> 80
 - Reportar un fallo de prama-agent (no de tu tarea):  prama-agent feedback "<comando, qué esperabas, qué obtuviste>"
+- Memoria del equipo (decisiones, convenciones, hallazgos, en qué va el trabajo; sobrevive reinicios
+  y llega a los agentes nuevos): léela con 'prama-agent memory show' al empezar; agrega una nota breve
+  con 'prama-agent memory add "<nota>"' cuando decidas o aprendas algo durable
+  (--zone-wide para hechos que necesitan todos los equipos de la zona).
 EOF
 )
   models_help="Modelos: claude → opus | sonnet | haiku (o un id completo); agy → ids de 'prama-agent fleet models agy'
@@ -174,6 +184,8 @@ Gestión de la flota (tú administras a tus agentes; todo devuelve JSON con --js
 - Reiniciar un agente (p. ej. tras un error):                prama-agent fleet restart <sesión>
 - Cerrar un agente que ya no necesitas:                      prama-agent fleet kill <sesión>
 $models_help
+Mantén al día la memoria del equipo: registra cada decisión, el plan y quién hace qué con
+'prama-agent memory add', para que un coordinador reiniciado o un agente nuevo retome el trabajo.
 Cierra los agentes extra al terminar.
 Límite de agentes simultáneos: ${PRAMA_FLEET_MAX:-8}.
 EOF

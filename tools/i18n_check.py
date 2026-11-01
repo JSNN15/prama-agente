@@ -71,6 +71,22 @@ def sh_catalog(lang):
     return dict(zip(parts[0::2], parts[1::2]))
 
 
+def sh_conflicts(lang):
+    """Catalog files that give the same msgid different translations (the last one loaded wins)."""
+    seen, out = {}, []
+    for path in sorted(glob.glob(os.path.join(ROOT, "lib", "lang", lang, "*.sh"))):
+        script = ('declare -A I18N=(); source "$1"; '
+                  'for k in "${!I18N[@]}"; do printf "%s\\0%s\\0" "$k" "${I18N[$k]}"; done')
+        raw = subprocess.run(["bash", "-c", script, "x", path], capture_output=True, check=True).stdout
+        parts = raw.decode("utf-8").split("\0")[:-1]
+        for k, v in zip(parts[0::2], parts[1::2]):
+            if k in seen and seen[k][1] != v:
+                out.append(f"[{lang}] {os.path.basename(path)} and {seen[k][0]} translate {k!r} differently: "
+                           f"{v!r} / {seen[k][1]!r}")
+            seen.setdefault(k, (os.path.basename(path), v))
+    return out
+
+
 def py_catalog(lang):
     path = os.path.join(ROOT, "lib", "lang", lang, "telegram_bot.json")
     return json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
@@ -102,6 +118,9 @@ def main():
         errors += e
         e, u2 = check("python", pids, py_catalog(lang), lang, show_unused)
         errors += e
+        for c in sh_conflicts(lang):
+            print(c)
+            errors += 1
     for where in dyn:
         print(f"{where}: msgid with a $ expansion (use a %s placeholder)")
         errors += 1

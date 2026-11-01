@@ -207,6 +207,8 @@ _swarm_start() {
   [ -n "$who" ] || _tv who '(no executors)'
   _tv brief "[PRAMA] Your team \"%s\" in '%s': %s. Delegate with 'prama-agent bus assign <session> \"<task>\"', check with 'prama-agent fleet status' and add or remove agents with 'prama-agent fleet spawn|kill'." "$team" "$zone" "$who"
   [ -n "$task" ] && brief+=" $(_t 'OBJECTIVE: %s' "$task")"
+  local nm; nm=$(( $(memory_count "$zone" "$team") + $(memory_count "$zone") ))
+  (( nm > 0 )) && brief+=" $(_t "TEAM MEMORY: %d note(s), read them first with 'prama-agent memory show'." "$nm")"
   queue_push "$cs" "$brief"
   _tv evtext 'team %s: %s' "$team" "${members[*]:-}"
   [ -n "$task" ] && evtext+=$(_t ' · objective: %s' "$task")
