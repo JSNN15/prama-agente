@@ -13,7 +13,12 @@
 #  * All dynamic text is HTML-escaped; screen snapshots are sent inside <pre>.
 #
 # Environment: PRAMA_TG_CONF, SELF_PATH, PRAMA_TMUX_SOCKET, PRAMA_BUS_DIR (passed through to the
-# CLI), PRAMA_TG_API_BASE (default https://api.telegram.org), PRAMA_TG_LOG (optional log file).
+# CLI), PRAMA_TG_API_BASE (default https://api.telegram.org), PRAMA_TG_LOG (optional log file),
+# PRAMA_UI_LANG (interface language, en | es; default en).
+#
+# Interface text: the message id is the English text passed to _() (a plain literal, formatted
+# afterwards with % or .format), translated from lib/lang/<lang>/telegram_bot.json; a missing
+# entry falls back to English. tools/i18n_check.py checks every _() literal has a translation.
 # Exit codes: 0 = clean stop, 3 = configuration problem (do not restart), other = crash.
 
 import html
@@ -32,12 +37,6 @@ import urllib.request
 EXIT_CONFIG = 3
 SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$")
 ROLES = ("executor", "coordinator", "reader", "daemon")
-ROLE_DESCS = {
-    "executor": "Ejecuta tareas",
-    "coordinator": "Planifica y reparte",
-    "reader": "Solo lectura / revisión",
-    "daemon": "Bucle autónomo",
-}
 CB_MAX = 64                # Telegram limit for callback_data, in bytes
 CB_CACHE_MAX = 512
 POLL_TIMEOUT = 25
@@ -50,12 +49,74 @@ WATCH_MAX = 12.0
 MAX_LISTED = 25
 MAX_WORKERS = 6            # workers per team created from Telegram
 TEAM_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,19}$")
-DEFAULT_TEAM = "principal"
-TEAM_SUGGESTIONS = ("arquitectura", "seguridad", "docs", "tests")
+DEFAULT_TEAM = "principal"  # team name stored by the CLI: data, never translated
+# Suggested names for a new team (they become part of session names), per interface language.
+TEAM_SUGGESTIONS = {"es": ("arquitectura", "seguridad", "docs", "tests"),
+                    "en": ("architecture", "security", "docs", "tests")}
+# Slash commands: canonical (English) name -> aliases. Every alias works in every language;
+# LOCAL_COMMANDS gives the name shown in /help and in the command menu of a language.
+COMMAND_ALIASES = {
+    "menu": ("start",),
+    "teams": ("team", "equipos", "equipo"),
+    "quota": ("cuota",),
+    "reports": ("reportes", "bugs"),
+}
+LOCAL_COMMANDS = {"es": {"teams": "equipos", "quota": "cuota", "reports": "reportes"}}
 HOST = socket.gethostname().split(".")[0]
 
 TOKEN = ""
 LOG_PATH = os.environ.get("PRAMA_TG_LOG", "")
+
+
+# ── Interface language ──────────────────────────────────────────────────────
+LANG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lang")
+UI_LANG = "en"
+CATALOG = {}
+
+
+def set_lang(lang):
+    """Loads the catalog of lang (en | es). A missing catalog or entry falls back to English."""
+    global UI_LANG, CATALOG
+    lang = lang if re.match(r"^[a-z]{2}$", lang or "") else "en"
+    cat = {}
+    if lang != "en":
+        try:
+            with open(os.path.join(LANG_DIR, lang, "telegram_bot.json"), encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                cat = {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)}
+        except (OSError, ValueError):
+            pass  # no catalog: English
+    UI_LANG, CATALOG = lang, cat
+
+
+def _(msgid):
+    """Translated text of an English message id."""
+    return CATALOG.get(msgid, msgid)
+
+
+def command_name(cmd):
+    """Name of a canonical slash command in the active language ('teams' -> 'equipos' in es)."""
+    return LOCAL_COMMANDS.get(UI_LANG, {}).get(cmd, cmd)
+
+
+def canonical_command(cmd):
+    for name, aliases in COMMAND_ALIASES.items():
+        if cmd in aliases:
+            return name
+    return cmd
+
+
+def role_desc(role):
+    return {
+        "executor": _("Runs tasks"),
+        "coordinator": _("Plans and hands out work"),
+        "reader": _("Read-only / review"),
+        "daemon": _("Autonomous loop"),
+    }.get(role, "")
+
+
+set_lang(os.environ.get("PRAMA_UI_LANG", "en"))
 
 
 # ── Logging ─────────────────────────────────────────────────────────────────
@@ -149,7 +210,7 @@ class Api:
         try:
             return json.loads(body.decode("utf-8", "replace"))
         except ValueError:
-            return {"ok": False, "description": "respuesta no JSON"}
+            return {"ok": False, "description": _("non-JSON response")}
 
 
 # ── prama CLI wrapper ───────────────────────────────────────────────────────
@@ -168,9 +229,9 @@ class Prama:
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  timeout=timeout)
         except subprocess.TimeoutExpired:
-            raise CliError("tiempo de espera agotado (%ss)" % timeout)
+            raise CliError(_("timed out (%ss)") % timeout)
         except OSError as ex:
-            raise CliError("no se pudo ejecutar prama-agent: %s" % ex)
+            raise CliError(_("could not run prama-agent: %s") % ex)
         out = res.stdout.decode("utf-8", "replace")
         err = res.stderr.decode("utf-8", "replace")
         return res.returncode, out, err
@@ -178,7 +239,7 @@ class Prama:
     def ok(self, args, timeout=30):
         rc, out, err = self.run(args, timeout)
         if rc != 0:
-            msg = clean_err(err) or clean_err(out) or ("código de salida %d" % rc)
+            msg = clean_err(err) or clean_err(out) or (_("exit code %d") % rc)
             raise CliError(msg)
         return out
 
@@ -191,9 +252,9 @@ class Prama:
         try:
             data = json.loads(out)
         except ValueError:
-            raise CliError("salida JSON inválida de: prama-agent %s" % " ".join(args))
+            raise CliError(_("invalid JSON output from: prama-agent %s") % " ".join(args))
         if not isinstance(data, list):
-            raise CliError("se esperaba una lista JSON de: prama-agent %s" % " ".join(args))
+            raise CliError(_("expected a JSON list from: prama-agent %s") % " ".join(args))
         self._cache[key] = (time.time(), data)
         return data
 
@@ -259,7 +320,7 @@ def fit_pre(lines):
         kept.append(el)
         size += len(el) + 1
     kept.reverse()
-    return "\n".join(kept) if kept else "(pantalla vacía)"
+    return "\n".join(kept) if kept else _("(empty screen)")
 
 
 def dot(s):
@@ -322,7 +383,7 @@ def team_label(coord):
 
 def zone_teams(teams, zone):
     """Team names of a zone."""
-    return [team_name(c) for c, _ in teams.values() if c.get("zone") == zone]
+    return [team_name(c) for c, _members in teams.values() if c.get("zone") == zone]
 
 
 # ── Bot ─────────────────────────────────────────────────────────────────────
@@ -337,7 +398,7 @@ class Bot:
         self.cb_next = 0
         self.lock = threading.Lock()
         self.unauth_seen = {}
-        self.pending_team = ""     # zone waiting for a typed team name ("✍️ Otro nombre")
+        self.pending_team = ""     # zone waiting for a typed team name ("✍️ Other name")
 
     # ── helpers ──
     def cb(self, data):
@@ -374,7 +435,7 @@ class Bot:
         desc = str(res.get("description", ""))
         if "message is not modified" in desc:
             return edit_id
-        log("%s falló: %s" % (method, desc))
+        log(_("%s failed: %s") % (method, desc))
         if edit_id and ("not found" in desc or "can't be edited" in desc):
             return self.send(text, kb)
         payload.pop("parse_mode", None)
@@ -383,7 +444,7 @@ class Bot:
         if res.get("ok"):
             r = res.get("result")
             return r.get("message_id", edit_id) if isinstance(r, dict) else edit_id
-        log("%s (texto plano) falló: %s" % (method, res.get("description", "")))
+        log(_("%s (plain text) failed: %s") % (method, res.get("description", "")))
         return None
 
     def authorized(self, chat_id, user_id):
@@ -396,7 +457,7 @@ class Bot:
         key = "%s/%s" % (chat_id, user_id)
         if now - self.unauth_seen.get(key, 0) > 600:
             self.unauth_seen[key] = now
-            log("ignorado: chat %s / usuario %s no autorizado" % (chat_id, user_id))
+            log(_("ignored: chat %s / user %s not authorized") % (chat_id, user_id))
 
     def find_session(self, name):
         """Returns the session dict if name is valid AND currently exists, else None."""
@@ -416,10 +477,10 @@ class Bot:
         controllable = [s for s in ss if SESSION_RE.match(s["name"])]
         if not self.selected and len(controllable) == 1:
             self.selected = controllable[0]["name"]
-        lines = ["<b>✦ PRAMA AGENT · Control móvil</b>",
+        lines = [_("<b>✦ PRAMA AGENT · Mobile control</b>"),
                  "🖥 <code>%s</code> · %s" % (e(HOST), time.strftime("%H:%M:%S")), ""]
         if ss:
-            lines.append("<b>Sesiones (%d)</b>" % len(ss))
+            lines.append(_("<b>Sessions (%d)</b>") % len(ss))
             for s in ss[:MAX_LISTED]:
                 mark = "  ✍️" if s["name"] == self.selected else ""
                 lines.append("%s <code>%s</code>%s" % (dot(s), e(s["name"]), mark))
@@ -429,21 +490,21 @@ class Bot:
                     meta += " · CPU %s · %s" % (s.get("cpu", "?"), s.get("mem", "?"))
                 lines.append("    <i>%s</i>" % e(meta))
             if len(ss) > MAX_LISTED:
-                lines.append("<i>… y %d más</i>" % (len(ss) - MAX_LISTED))
+                lines.append(_("<i>… and %d more</i>") % (len(ss) - MAX_LISTED))
         else:
-            lines.append("<i>No hay agentes activos.</i>")
+            lines.append(_("<i>No active agents.</i>"))
         lines.append("")
         if self.selected:
-            lines.append("✍️ Lo que escribas irá a <b>%s</b>." % e(self.selected))
+            lines.append(_("✍️ What you type goes to <b>%s</b>.") % e(self.selected))
         else:
-            lines.append("Toca una sesión o lanza un agente nuevo.")
+            lines.append(_("Tap a session or launch a new agent."))
         kb = []
         for s in controllable[:MAX_LISTED]:
             kb.append([self.b("%s %s · %s" % (dot(s), s["name"], s.get("role", "?")),
                               "s:" + s["name"])])
-        kb.append([self.b("➕ Nuevo agente", "n"), self.b("🤝 Nuevo equipo", "w")])
-        kb.append([self.b("👥 Equipos", "T"), self.b("◔ Cuota", "q")])
-        kb.append([self.b("🔄 Refrescar", "m"), self.b("❓ Ayuda", "h")])
+        kb.append([self.b(_("➕ New agent"), "n"), self.b(_("🤝 New team"), "w")])
+        kb.append([self.b(_("👥 Teams"), "T"), self.b(_("◔ Quota"), "q")])
+        kb.append([self.b(_("🔄 Refresh"), "m"), self.b(_("❓ Help"), "h")])
         return "\n".join(lines), kb
 
     def view_session(self, s, note=""):
@@ -453,17 +514,17 @@ class Bot:
             lines += [note, ""]
         lines += [
             "%s <b>%s</b>%s" % (dot(s), e(name), "  ✍️" if name == self.selected else ""),
-            "Rol: <b>%s</b> · Agente: <b>%s</b>" % (e(s.get("role", "?")), e(s.get("agent", "?"))),
-            "Estado: <b>%s</b> · Zona: <b>%s</b>" % (e(str(s.get("state", "?")).lower()),
-                                                   e(s.get("zone", "?"))),
+            _("Role: <b>%s</b> · Agent: <b>%s</b>") % (e(s.get("role", "?")), e(s.get("agent", "?"))),
+            _("State: <b>%s</b> · Zone: <b>%s</b>") % (e(str(s.get("state", "?")).lower()),
+                                                      e(s.get("zone", "?"))),
             "CPU %s · RAM %s" % (e(s.get("cpu", "?")), e(s.get("mem", "?"))),
         ]
         if s.get("dir"):
             lines.append("📁 <code>%s</code>" % e(s["dir"]))
         kb = [
-            [self.b("👁 Ver pantalla", "p:" + name), self.b("💬 Hablar", "t:" + name)],
-            [self.b("🔄 Reiniciar", "r:" + name), self.b("🛑 Cerrar", "x:" + name)],
-            [self.b("⬅ Volver", "m")],
+            [self.b(_("👁 View screen"), "p:" + name), self.b(_("💬 Talk"), "t:" + name)],
+            [self.b(_("🔄 Restart"), "r:" + name), self.b(_("🛑 Close"), "x:" + name)],
+            [self.b(_("⬅ Back"), "m")],
         ]
         return "\n".join(lines), kb
 
@@ -473,50 +534,50 @@ class Bot:
         return "%s📺 <b>%s</b> · %s\n<pre>%s</pre>" % (top, e(name), time.strftime("%H:%M:%S"), body)
 
     def snapshot_kb(self, name):
-        return [[self.b("🔄 Actualizar", "p:" + name), self.b("💬 Hablar", "t:" + name)],
-                [self.b("⬅ Volver", "s:" + name), self.b("☰ Menú", "m")]]
+        return [[self.b(_("🔄 Update"), "p:" + name), self.b(_("💬 Talk"), "t:" + name)],
+                [self.b(_("⬅ Back"), "s:" + name), self.b(_("☰ Menu"), "m")]]
 
     def view_help(self):
         text = "\n".join([
-            "<b>❓ Ayuda · Prama Agent</b>", "",
-            "/menu — menú principal",
-            "/status — sesiones con CPU/RAM",
-            "/logs [sesión] — ver pantalla",
-            "/send &lt;sesión&gt; &lt;texto&gt; — escribir a una sesión",
-            "/launch &lt;agente&gt; &lt;zona&gt; [rol] — lanzar agente",
-            "/equipos — equipos: estado, hablar al coordinador, sumar o cerrar",
-            "/cuota — uso de cuota 5h / 7d por agente",
-            "/reportes — fallos de prama-agent reportados por los agentes",
-            "/help — esta ayuda", "",
-            "Texto normal → se envía a la sesión seleccionada (✍️).",
-            "Roles: " + ", ".join(ROLES),
+            _("<b>❓ Help · Prama Agent</b>"), "",
+            _("/menu — main menu"),
+            _("/status — sessions with CPU/RAM"),
+            _("/logs [session] — view the screen"),
+            _("/send &lt;session&gt; &lt;text&gt; — write to a session"),
+            _("/launch &lt;agent&gt; &lt;zone&gt; [role] — launch an agent"),
+            _("/%s — teams: status, talk to the coordinator, add or close") % command_name("teams"),
+            _("/%s — 5h / 7d quota usage per agent") % command_name("quota"),
+            _("/%s — prama-agent bugs reported by the agents") % command_name("reports"),
+            _("/help — this help"), "",
+            _("Plain text → goes to the selected session (✍️)."),
+            _("Roles: %s") % ", ".join(ROLES),
         ])
-        return text, [[self.b("⬅ Volver", "m")]]
+        return text, [[self.b(_("⬅ Back"), "m")]]
 
     def view_teams(self, note=""):
         teams = teams_of(self.prama.fleet())
-        lines = ([note, ""] if note else []) + ["<b>👥 Equipos</b>", ""]
+        lines = ([note, ""] if note else []) + [_("<b>👥 Teams</b>"), ""]
         kb = []
         if not teams:
-            lines.append("<i>No hay equipos activos.</i>")
+            lines.append(_("<i>No active teams.</i>"))
         for cs in sorted(teams, key=lambda c: team_label(teams[c][0])):
             coord, members = teams[cs]
-            lines.append("%s <b>%s</b> · %s + %d agente(s)" % (dot(coord), e(team_label(coord)),
-                                                                e(coord.get("agent", "?")), len(members)))
+            lines.append(_("%s <b>%s</b> · %s + %d agent(s)") % (dot(coord), e(team_label(coord)),
+                                                                  e(coord.get("agent", "?")), len(members)))
             kb.append([self.b("🤝 %s (%d)" % (team_label(coord), len(members) + 1), "T:" + cs)])
-        kb.append([self.b("🤝 Nuevo equipo", "w"), self.b("⬅ Volver", "m")])
+        kb.append([self.b(_("🤝 New team"), "w"), self.b(_("⬅ Back"), "m")])
         return "\n".join(lines), kb
 
     def view_team(self, cs, note=""):
         teams = teams_of(self.prama.fleet())
         if cs not in teams:
             # /equipos <zone>: the zone's only team, or the list when it has several.
-            in_zone = [c for c, (d, _) in teams.items() if d.get("zone") == cs]
+            in_zone = [c for c, (d, _members) in teams.items() if d.get("zone") == cs]
             if len(in_zone) != 1:
-                return self.view_teams("⚠️ No hay un equipo <b>%s</b>." % e(cs) if not in_zone else note)
+                return self.view_teams(_("⚠️ There is no team <b>%s</b>.") % e(cs) if not in_zone else note)
             cs = in_zone[0]
         coord, members = teams[cs]
-        lines = ([note, ""] if note else []) + ["<b>🤝 Equipo · %s</b>" % e(team_label(coord)), ""]
+        lines = ([note, ""] if note else []) + [_("<b>🤝 Team · %s</b>") % e(team_label(coord)), ""]
         for d, lead in [(coord, "❖")] + [(m, "└") for m in members]:
             st = str(d.get("state", "?")).lower()
             if d.get("blocked_reason"):
@@ -527,20 +588,21 @@ class Bot:
             if d.get("queue"):
                 meta += " · ✉ %s" % d["queue"]
             lines.append("    <i>%s</i>" % e(meta))
-        lines += ["", "💬 Lo que escribas tras «Hablar» va al coordinador, que reparte el trabajo."]
-        kb = [[self.b("💬 Hablar al coordinador", "t:" + cs), self.b("👁 Pantalla", "p:" + cs)]]
+        lines += ["", _("💬 What you type after «Talk» goes to the coordinator, who hands out the work.")]
+        kb = [[self.b(_("💬 Talk to the coordinator"), "t:" + cs), self.b(_("👁 Screen"), "p:" + cs)]]
         add = [self.b("➕ 1 %s" % a, "ta:%s:%s" % (cs, a)) for a in self.prama.agents()[:3]]
         if add:
             kb.append(add)
-        kb.append([self.b("🛑 Cerrar equipo", "tx:" + cs), self.b("🔄", "T:" + cs)])
-        kb.append([self.b("⬅ Equipos", "T"), self.b("☰ Menú", "m")])
+        kb.append([self.b(_("🛑 Close team"), "tx:" + cs), self.b("🔄", "T:" + cs)])
+        kb.append([self.b(_("⬅ Teams"), "T"), self.b(_("☰ Menu"), "m")])
         return "\n".join(lines), kb
 
     def view_team_names(self, zone):
         """New team, step 2: an existing team of the zone (add agents) or a new name."""
         existing = zone_teams(teams_of(self.prama.fleet()), zone)
-        kb = [[self.b("➕ sumar a «%s»" % t, "wn:%s:%s" % (zone, t))] for t in existing]
-        fresh = [t for t in ((DEFAULT_TEAM,) if not existing else ()) + TEAM_SUGGESTIONS if t not in existing]
+        kb = [[self.b(_("➕ add to «%s»") % t, "wn:%s:%s" % (zone, t))] for t in existing]
+        suggestions = TEAM_SUGGESTIONS.get(UI_LANG, TEAM_SUGGESTIONS["en"])
+        fresh = [t for t in ((DEFAULT_TEAM,) if not existing else ()) + suggestions if t not in existing]
         row = []
         for t in fresh:
             row.append(self.b("🆕 %s" % t, "wn:%s:%s" % (zone, t)))
@@ -549,111 +611,111 @@ class Bot:
                 row = []
         if row:
             kb.append(row)
-        kb.append([self.b("✍️ Otro nombre", "wo:" + zone)])
-        kb.append([self.b("⬅ Volver", "w")])
-        text = ("<b>🤝 Nuevo equipo · 2/3</b>\nZona: <b>%s</b>\nUna zona puede tener varios equipos "
-                "(arquitectura, seguridad, docs…), cada uno con su coordinador. Elige el equipo:" % e(zone))
+        kb.append([self.b(_("✍️ Other name"), "wo:" + zone)])
+        kb.append([self.b(_("⬅ Back"), "w")])
+        text = _("<b>🤝 New team · 2/3</b>\nZone: <b>%s</b>\nA zone can hold several teams (architecture, security, docs…), each with its own coordinator. Choose the team:") % e(zone)
         return text, kb
 
     def view_team_workers(self, zone, team):
         kb = [[self.b("%s × %d" % (a, n), "wg:%s:%s:%s:%d" % (zone, team, a, n)) for n in (1, 2, 3)]
               for a in self.prama.agents()]
-        kb.append([self.b("⬅ Volver", "wz:" + zone)])
-        return ("<b>🤝 Nuevo equipo · 3/3</b>\nZona: <b>%s</b> · Equipo: <b>%s</b>\nElige los ejecutores:"
+        kb.append([self.b(_("⬅ Back"), "wz:" + zone)])
+        return (_("<b>🤝 New team · 3/3</b>\nZone: <b>%s</b> · Team: <b>%s</b>\nChoose the executors:")
                 % (e(zone), e(team))), kb
 
     def view_quota(self):
         fleet = self.prama.fleet()
-        lines = ["<b>◔ Cuota por agente</b>", ""]
+        lines = [_("<b>◔ Quota per agent</b>"), ""]
         for d in fleet:
             q = quota_text(d.get("quota"))
             warn = " ⚠️" if quota_peak(d.get("quota")) >= 90 else ""
             lines.append("%s <code>%s</code>%s" % (dot(d), e(d["session"]), warn))
             lines.append("    <i>%s</i>" % e(" · ".join(x for x in (d.get("model") or d.get("agent", "?"),
-                                                                    q or "sin datos aún") if x)))
+                                                                    q or _("no data yet")) if x)))
         if not fleet:
-            lines.append("<i>No hay agentes activos.</i>")
-        return "\n".join(lines), [[self.b("🔄 Actualizar", "q"), self.b("⬅ Volver", "m")]]
+            lines.append(_("<i>No active agents.</i>"))
+        return "\n".join(lines), [[self.b(_("🔄 Update"), "q"), self.b(_("⬅ Back"), "m")]]
 
     def view_reports(self):
         reps = self.prama.feedback()
-        lines = ["<b>🐞 Reportes de fallos de prama-agent</b>", ""]
+        lines = [_("<b>🐞 prama-agent bug reports</b>"), ""]
         for d in reps[:MAX_LISTED]:
             n = d.get("count") or 1
             lines.append("• <code>%s</code> · %s · %s%s" % (e(d["id"]), e(d.get("kind", "bug")), e(d.get("from", "?")),
                                                          " (×%s)" % e(n) if n != 1 else ""))
             lines.append("    <i>%s</i>" % e(str(d.get("summary", ""))[:200]))
         if not reps:
-            lines.append("<i>No hay reportes abiertos.</i>")
+            lines.append(_("<i>No open reports.</i>"))
         else:
-            hint = ("En el servidor: <code>prama-agent feedback show &lt;id&gt;</code> · "
-                    + "<code>feedback export &lt;id&gt;</code> para un issue de GitHub.")
+            hint = _("On the server: <code>prama-agent feedback show &lt;id&gt;</code> · <code>feedback export &lt;id&gt;</code> for a GitHub issue.")
             lines += ["", hint]
-        return "\n".join(lines), [[self.b("🔄 Actualizar", "f"), self.b("⬅ Volver", "m")]]
+        return "\n".join(lines), [[self.b(_("🔄 Update"), "f"), self.b(_("⬅ Back"), "m")]]
 
     def do_team(self, zone, team, agent, count, edit_id=None):
         """Creates a team in a zone, or adds workers to it when it already exists."""
         if zone not in self.prama.zones():
-            return self.send(*self.view_error("Zona desconocida: %s" % zone, "w"), edit_id=edit_id)
+            return self.send(*self.view_error(_("Unknown zone: %s") % zone, "w"), edit_id=edit_id)
         if not TEAM_RE.match(team or ""):
-            return self.send(*self.view_error("Nombre de equipo inválido: %s" % team, "w"), edit_id=edit_id)
+            return self.send(*self.view_error(_("Invalid team name: %s") % team, "w"), edit_id=edit_id)
         if agent not in self.prama.agents():
-            return self.send(*self.view_error("Agente no permitido o no instalado: %s" % agent, "w"),
+            return self.send(*self.view_error(_("Agent not allowed or not installed: %s") % agent, "w"),
                              edit_id=edit_id)
         if not (1 <= count <= MAX_WORKERS):
-            return self.send(*self.view_error("Cantidad inválida (1-%d)." % MAX_WORKERS, "w"), edit_id=edit_id)
+            return self.send(*self.view_error(_("Invalid count (1-%d).") % MAX_WORKERS, "w"), edit_id=edit_id)
         had = team in zone_teams(teams_of(self.prama.fleet()), zone)
-        mid = self.send("⏳ %s <b>%d %s</b> · equipo <b>%s</b> en <b>%s</b>…" % (
-            "Sumando" if had else "Creando con", count, e(agent), e(team), e(zone)), edit_id=edit_id)
+        if had:
+            busy = _("⏳ Adding <b>{count} {agent}</b> to team <b>{team}</b> in <b>{zone}</b>…")
+        else:
+            busy = _("⏳ Creating team <b>{team}</b> in <b>{zone}</b> with <b>{count} {agent}</b>…")
+        mid = self.send(busy.format(count=count, agent=e(agent), team=e(team), zone=e(zone)), edit_id=edit_id)
         try:
             self.prama.ok(["swarm", zone, "--team", team, "--workers", "%s:%d" % (agent, count), "--no-open"],
                           timeout=240)
         except CliError as ex:
-            return self.send(*self.view_error("No se pudo formar el equipo: %s" % ex, "w"), edit_id=mid)
+            return self.send(*self.view_error(_("Could not form the team: %s") % ex, "w"), edit_id=mid)
         teams = teams_of(self.prama.fleet())
-        cs = next((c for c, (d, _) in teams.items() if d.get("zone") == zone and team_name(d) == team), "")
+        cs = next((c for c, (d, _members) in teams.items() if d.get("zone") == zone and team_name(d) == team), "")
         if cs and not had:
             self.selected = cs
-            note = ("✅ Equipo listo. <b>Escribe el objetivo</b>: lo que envíes ahora va al coordinador "
-                    "<b>%s</b>." % e(cs))
+            note = _("✅ Team ready. <b>Type the goal</b>: what you send now goes to the coordinator <b>%s</b>.") % e(cs)
         else:
-            note = "✅ %d %s sumado(s) al equipo." % (count, e(agent))
+            note = _("✅ %d %s added to the team.") % (count, e(agent))
         if not cs:
             return self.send(*self.view_teams(note), edit_id=mid)
         return self.send(*self.view_team(cs, note), edit_id=mid)
 
     def view_error(self, msg, back="m"):
-        return "⚠️ %s" % e(msg), [[self.b("⬅ Volver", back)]]
+        return "⚠️ %s" % e(msg), [[self.b(_("⬅ Back"), back)]]
 
     # ── actions ──
     def do_launch(self, agent, zone, role, edit_id=None):
         if agent not in self.prama.agents():
-            return self.send(*self.view_error("Agente no permitido o no instalado: %s" % agent),
+            return self.send(*self.view_error(_("Agent not allowed or not installed: %s") % agent),
                              edit_id=edit_id)
         if zone not in self.prama.zones():
-            return self.send(*self.view_error("Zona desconocida: %s" % zone), edit_id=edit_id)
+            return self.send(*self.view_error(_("Unknown zone: %s") % zone), edit_id=edit_id)
         if role not in ROLES:
-            return self.send(*self.view_error("Rol inválido: %s (usa %s)" % (role, ", ".join(ROLES))),
+            return self.send(*self.view_error(_("Invalid role: %s (use %s)") % (role, ", ".join(ROLES))),
                              edit_id=edit_id)
-        mid = self.send("⏳ Lanzando <b>%s</b> en <b>%s</b> (%s)…" % (e(agent), e(zone), e(role)),
+        mid = self.send(_("⏳ Launching <b>%s</b> in <b>%s</b> (%s)…") % (e(agent), e(zone), e(role)),
                         edit_id=edit_id)
         try:
             out = self.prama.ok([agent, zone, "--role", role, "--bg", "--porcelain"], timeout=90)
         except CliError as ex:
-            return self.send(*self.view_error("No se pudo lanzar: %s" % ex), edit_id=mid)
+            return self.send(*self.view_error(_("Could not launch: %s") % ex), edit_id=mid)
         name = out.strip().splitlines()[-1].strip() if out.strip() else ""
         s = self.find_session(name)
         if not s:
-            return self.send(*self.view_error("Lanzado, pero la sesión «%s» no aparece." % name),
+            return self.send(*self.view_error(_("Launched, but session «%s» does not show up.") % name),
                              edit_id=mid)
         self.selected = name
-        return self.send(*self.view_session(s, "✅ Agente lanzado. Ahora escribes a esta sesión."),
+        return self.send(*self.view_session(s, _("✅ Agent launched. You are now writing to this session.")),
                          edit_id=mid)
 
     def deliver_text(self, name, text, edit_id=None):
         s = self.find_session(name)
         if not s:
-            return self.send(*self.view_error("Sesión no encontrada: %s" % name), edit_id=edit_id)
+            return self.send(*self.view_error(_("Session not found: %s") % name), edit_id=edit_id)
         text = text.replace("\r", "").replace("\n", " ").strip()
         if not text:
             return None
@@ -664,8 +726,8 @@ class Bot:
         try:
             self.prama.ok(["send", name, text], timeout=20)
         except CliError as ex:
-            return self.send(*self.view_error("No se pudo enviar a %s: %s" % (name, ex)))
-        mid = self.send("📨 Enviado a <b>%s</b>. Esperando respuesta…" % e(name))
+            return self.send(*self.view_error(_("Could not send to %s: %s") % (name, ex)))
+        mid = self.send(_("📨 Sent to <b>%s</b>. Waiting for the reply…") % e(name))
         if mid:
             t = threading.Thread(target=self._watch, args=(name, mid, before), daemon=True)
             t.start()
@@ -685,14 +747,14 @@ class Bot:
                 if cur == last and cur != before:
                     break
                 last = cur
-            self.send(self.snapshot_html(name, snap, "📨 Respuesta de <b>%s</b>:" % e(name)),
+            self.send(self.snapshot_html(name, snap, _("📨 Reply from <b>%s</b>:") % e(name)),
                       self.snapshot_kb(name), edit_id=mid)
         except Exception as ex:  # never let a watcher thread die noisily
             log("watch %s: %r" % (name, ex))
 
     def show_snapshot(self, name, edit_id=None):
         if not self.find_session(name):
-            return self.send(*self.view_error("Sesión no encontrada: %s" % name), edit_id=edit_id)
+            return self.send(*self.view_error(_("Session not found: %s") % name), edit_id=edit_id)
         raw = self.prama.capture(name)
         return self.send(self.snapshot_html(name, raw), self.snapshot_kb(name), edit_id=edit_id)
 
@@ -703,7 +765,7 @@ class Bot:
                 data = self.cb_cache[int(data[1:])]
             except (ValueError, KeyError):
                 return self.send(*self.view_menu(), edit_id=mid)
-        act, _, arg = data.partition(":")
+        act, _sep, arg = data.partition(":")
         if act == "m":
             return self.send(*self.view_menu(), edit_id=mid)
         if act == "h":
@@ -711,7 +773,7 @@ class Bot:
         if act in ("s", "p", "t", "r", "x", "R", "X"):
             s = self.find_session(arg)
             if not s:
-                return self.send(*self.view_error("La sesión «%s» ya no existe." % arg), edit_id=mid)
+                return self.send(*self.view_error(_("Session «%s» no longer exists.") % arg), edit_id=mid)
             name = s["name"]
             if act == "s":
                 return self.send(*self.view_session(s), edit_id=mid)
@@ -720,88 +782,90 @@ class Bot:
             if act == "t":
                 self.selected = name
                 return self.send(*self.view_session(
-                    s, "💬 Chat vinculado a <b>%s</b>. Escribe tu mensaje." % e(name)), edit_id=mid)
+                    s, _("💬 Chat linked to <b>%s</b>. Type your message.") % e(name)), edit_id=mid)
             if act in ("r", "x"):
-                verb = "reiniciar" if act == "r" else "cerrar"
-                return self.send("⚠️ ¿Seguro que quieres <b>%s</b> la sesión <b>%s</b>?" % (verb, e(name)),
-                                 [[self.b("✅ Sí, %s" % verb, act.upper() + ":" + name),
-                                   self.b("✖ No", "s:" + name)]], edit_id=mid)
+                if act == "r":
+                    ask, yes = _("⚠️ Are you sure you want to <b>restart</b> session <b>%s</b>?"), _("✅ Yes, restart")
+                else:
+                    ask, yes = _("⚠️ Are you sure you want to <b>close</b> session <b>%s</b>?"), _("✅ Yes, close")
+                return self.send(ask % e(name),
+                                 [[self.b(yes, act.upper() + ":" + name),
+                                   self.b(_("✖ No"), "s:" + name)]], edit_id=mid)
             if act == "R":
-                self.send("⏳ Reiniciando <b>%s</b>…" % e(name), edit_id=mid)
+                self.send(_("⏳ Restarting <b>%s</b>…") % e(name), edit_id=mid)
                 try:
                     self.prama.ok(["restart", name], timeout=60)
                 except CliError as ex:
-                    return self.send(*self.view_error("Reinicio fallido: %s" % ex, "s:" + name), edit_id=mid)
+                    return self.send(*self.view_error(_("Restart failed: %s") % ex, "s:" + name), edit_id=mid)
                 time.sleep(1.5)
                 s2 = self.find_session(name) or s
-                return self.send(*self.view_session(s2, "🔄 Sesión reiniciada."), edit_id=mid)
+                return self.send(*self.view_session(s2, _("🔄 Session restarted.")), edit_id=mid)
             if act == "X":
                 try:
                     self.prama.ok(["stop", name], timeout=60)
                 except CliError as ex:
-                    return self.send(*self.view_error("No se pudo cerrar: %s" % ex, "s:" + name), edit_id=mid)
+                    return self.send(*self.view_error(_("Could not close: %s") % ex, "s:" + name), edit_id=mid)
                 if self.selected == name:
                     self.selected = ""
                 text, kb = self.view_menu()
-                return self.send("🛑 Sesión <b>%s</b> cerrada.\n\n%s" % (e(name), text), kb, edit_id=mid)
+                return self.send(_("🛑 Session <b>%s</b> closed.") % e(name) + "\n\n" + text, kb, edit_id=mid)
         if act == "n":                      # new agent: choose agent
             agents = self.prama.agents()
             if not agents:
-                return self.send(*self.view_error("No hay agentes instalados."), edit_id=mid)
-            kb = [[self.b(a, "na:" + a)] for a in agents] + [[self.b("⬅ Volver", "m")]]
-            return self.send("<b>➕ Nuevo agente · 1/3</b>\nElige el agente:", kb, edit_id=mid)
+                return self.send(*self.view_error(_("No agents installed.")), edit_id=mid)
+            kb = [[self.b(a, "na:" + a)] for a in agents] + [[self.b(_("⬅ Back"), "m")]]
+            return self.send(_("<b>➕ New agent · 1/3</b>\nChoose the agent:"), kb, edit_id=mid)
         if act == "na":                     # choose zone
             if arg not in self.prama.agents():
-                return self.send(*self.view_error("Agente no permitido: %s" % arg, "n"), edit_id=mid)
+                return self.send(*self.view_error(_("Agent not allowed: %s") % arg, "n"), edit_id=mid)
             kb = [[self.b(z, "nz:%s:%s" % (arg, z))] for z in self.prama.zones()]
-            kb.append([self.b("⬅ Volver", "n")])
-            return self.send("<b>➕ Nuevo agente · 2/3</b>\nAgente: <b>%s</b>\nElige la zona:" % e(arg),
+            kb.append([self.b(_("⬅ Back"), "n")])
+            return self.send(_("<b>➕ New agent · 2/3</b>\nAgent: <b>%s</b>\nChoose the zone:") % e(arg),
                              kb, edit_id=mid)
         if act == "nz":                     # choose role
-            agent, _, zone = arg.partition(":")
+            agent, _sep, zone = arg.partition(":")
             if agent not in self.prama.agents() or zone not in self.prama.zones():
-                return self.send(*self.view_error("Selección inválida.", "n"), edit_id=mid)
-            kb = [[self.b("%s · %s" % (r, ROLE_DESCS[r]), "nl:%s:%s:%s" % (agent, r, zone))] for r in ROLES]
-            kb.append([self.b("⬅ Volver", "na:" + agent)])
-            return self.send("<b>➕ Nuevo agente · 3/3</b>\nAgente: <b>%s</b> · Zona: <b>%s</b>\nElige el rol:"
+                return self.send(*self.view_error(_("Invalid selection."), "n"), edit_id=mid)
+            kb = [[self.b("%s · %s" % (r, role_desc(r)), "nl:%s:%s:%s" % (agent, r, zone))] for r in ROLES]
+            kb.append([self.b(_("⬅ Back"), "na:" + agent)])
+            return self.send(_("<b>➕ New agent · 3/3</b>\nAgent: <b>%s</b> · Zone: <b>%s</b>\nChoose the role:")
                              % (e(agent), e(zone)), kb, edit_id=mid)
         if act == "nl":                     # launch
             parts = arg.split(":", 2)
             if len(parts) != 3:
-                return self.send(*self.view_error("Selección inválida.", "n"), edit_id=mid)
+                return self.send(*self.view_error(_("Invalid selection."), "n"), edit_id=mid)
             agent, role, zone = parts
             return self.do_launch(agent, zone, role, edit_id=mid)
         if act == "w":                      # new team: choose zone
             self.pending_team = ""
-            kb = [[self.b(z, "wz:" + z)] for z in self.prama.zones()] + [[self.b("⬅ Volver", "m")]]
-            return self.send("<b>🤝 Nuevo equipo · 1/3</b>\nCoordinador + agentes ejecutores. Elige la zona:",
+            kb = [[self.b(z, "wz:" + z)] for z in self.prama.zones()] + [[self.b(_("⬅ Back"), "m")]]
+            return self.send(_("<b>🤝 New team · 1/3</b>\nCoordinator + executor agents. Choose the zone:"),
                              kb, edit_id=mid)
         if act == "wz":                     # choose the team (existing or new)
             if arg not in self.prama.zones():
-                return self.send(*self.view_error("Zona desconocida: %s" % arg, "w"), edit_id=mid)
+                return self.send(*self.view_error(_("Unknown zone: %s") % arg, "w"), edit_id=mid)
             return self.send(*self.view_team_names(arg), edit_id=mid)
         if act == "wo":                     # type a team name
             if arg not in self.prama.zones():
-                return self.send(*self.view_error("Zona desconocida: %s" % arg, "w"), edit_id=mid)
+                return self.send(*self.view_error(_("Unknown zone: %s") % arg, "w"), edit_id=mid)
             self.pending_team = arg
-            return self.send("✍️ Escribe el nombre del equipo para <b>%s</b> (minúsculas, números y guiones, "
-                             "máx. 20; p. ej. <code>pagos</code>)." % e(arg), [[self.b("✖ Cancelar", "wz:" + arg)]],
-                             edit_id=mid)
+            return self.send(_("✍️ Type the team name for <b>%s</b> (lowercase letters, digits and hyphens, max. 20; e.g. <code>payments</code>).") % e(arg),
+                             [[self.b(_("✖ Cancel"), "wz:" + arg)]], edit_id=mid)
         if act == "wn":                     # choose the workers
-            zone, _, team = arg.partition(":")
+            zone, _sep, team = arg.partition(":")
             if zone not in self.prama.zones() or not TEAM_RE.match(team):
-                return self.send(*self.view_error("Selección inválida.", "w"), edit_id=mid)
+                return self.send(*self.view_error(_("Invalid selection."), "w"), edit_id=mid)
             return self.send(*self.view_team_workers(zone, team), edit_id=mid)
         if act == "wg":                     # create the team / add its workers
             parts = arg.split(":")
             if len(parts) != 4 or not parts[3].isdigit():
-                return self.send(*self.view_error("Selección inválida.", "w"), edit_id=mid)
+                return self.send(*self.view_error(_("Invalid selection."), "w"), edit_id=mid)
             return self.do_team(parts[0], parts[1], parts[2], int(parts[3]), edit_id=mid)
         if act == "ta":                     # add one worker to a team
-            cs, _, agent = arg.partition(":")
+            cs, _sep, agent = arg.partition(":")
             team = teams_of(self.prama.fleet()).get(cs)
             if not team:
-                return self.send(*self.view_teams("⚠️ Ese equipo ya no existe."), edit_id=mid)
+                return self.send(*self.view_teams(_("⚠️ That team no longer exists.")), edit_id=mid)
             return self.do_team(team[0].get("zone", ""), team_name(team[0]), agent, 1, edit_id=mid)
         if act == "T":
             if arg:
@@ -814,21 +878,20 @@ class Bot:
         if act in ("tx", "TX"):             # close a whole team (with confirmation)
             team = teams_of(self.prama.fleet()).get(arg)
             if not team:
-                return self.send(*self.view_teams("⚠️ Ese equipo ya no existe."), edit_id=mid)
+                return self.send(*self.view_teams(_("⚠️ That team no longer exists.")), edit_id=mid)
             n, label = len(team[1]) + 1, team_label(team[0])
             if act == "tx":
-                return self.send("⚠️ ¿Cerrar el equipo <b>%s</b>? Se detienen el coordinador y sus "
-                                 "agentes (%d sesiones). Los otros equipos siguen trabajando." % (e(label), n),
-                                 [[self.b("✅ Sí, cerrar", "TX:" + arg), self.b("✖ No", "T:" + arg)]],
+                return self.send(_("⚠️ Close team <b>%s</b>? Its coordinator and agents stop (%d sessions). The other teams keep working.") % (e(label), n),
+                                 [[self.b(_("✅ Yes, close"), "TX:" + arg), self.b(_("✖ No"), "T:" + arg)]],
                                  edit_id=mid)
-            self.send("⏳ Cerrando el equipo <b>%s</b>…" % e(label), edit_id=mid)
+            self.send(_("⏳ Closing team <b>%s</b>…") % e(label), edit_id=mid)
             try:
                 self.prama.ok(["swarm", "stop", arg], timeout=120)
             except CliError as ex:
-                return self.send(*self.view_error("No se pudo cerrar: %s" % ex, "T:" + arg), edit_id=mid)
+                return self.send(*self.view_error(_("Could not close: %s") % ex, "T:" + arg), edit_id=mid)
             if self.selected in [team[0]["session"]] + [m["session"] for m in team[1]]:
                 self.selected = ""
-            return self.send(*self.view_teams("🛑 Equipo <b>%s</b> cerrado (%d sesiones)." % (e(label), n)),
+            return self.send(*self.view_teams(_("🛑 Team <b>%s</b> closed (%d sessions).") % (e(label), n)),
                              edit_id=mid)
         return self.send(*self.view_menu(), edit_id=mid)
 
@@ -838,10 +901,10 @@ class Bot:
         if not text:
             return None
         if text.startswith("/"):
-            head, _, rest = text.partition(" ")
-            cmd = head[1:].split("@", 1)[0].lower()
+            head, _sep, rest = text.partition(" ")
+            cmd = canonical_command(head[1:].split("@", 1)[0].lower())
             rest = rest.strip()
-            if cmd in ("start", "menu"):
+            if cmd == "menu":
                 return self.send(*self.view_menu())
             if cmd == "status":
                 return self.send(*self.view_menu(detail=True))
@@ -850,34 +913,34 @@ class Bot:
             if cmd == "logs":
                 name = rest.split()[0] if rest else self.selected
                 if not name:
-                    return self.send(*self.view_error("Indica la sesión: /logs &lt;sesión&gt;"))
+                    return self.send(*self.view_error(_("Name the session: /logs <session>")))
                 return self.show_snapshot(name)
             if cmd == "send":
-                name, _, msg = rest.partition(" ")
+                name, _sep, msg = rest.partition(" ")
                 if not name or not msg.strip():
-                    return self.send(*self.view_error("Uso: /send <sesión> <texto>"))
+                    return self.send(*self.view_error(_("Usage: /send <session> <text>")))
                 return self.deliver_text(name, msg)
-            if cmd in ("equipos", "equipo", "teams", "team"):
+            if cmd == "teams":
                 which = rest.split()[0] if rest else ""
                 return self.send(*(self.view_team(which) if which else self.view_teams()))
-            if cmd in ("cuota", "quota"):
+            if cmd == "quota":
                 return self.send(*self.view_quota())
-            if cmd in ("reportes", "reports", "bugs"):
+            if cmd == "reports":
                 return self.send(*self.view_reports())
             if cmd == "launch":
                 args = rest.split()
                 if len(args) not in (2, 3):
-                    return self.send(*self.view_error("Uso: /launch <agente> <zona> [rol]"))
+                    return self.send(*self.view_error(_("Usage: /launch <agent> <zone> [role]")))
                 role = args[2] if len(args) == 3 else "executor"
                 return self.do_launch(args[0], args[1], role)
-            return self.send(*self.view_error("Comando desconocido: /%s — usa /help" % cmd))
+            return self.send(*self.view_error(_("Unknown command: /%s — use /help") % cmd))
         if self.pending_team:
             zone, self.pending_team = self.pending_team, ""
             name = text.strip().lower().replace(" ", "-")
             if not TEAM_RE.match(name):
                 self.pending_team = zone
-                return self.send("⚠️ Nombre inválido. Usa minúsculas, números y guiones (máx. 20).",
-                                 [[self.b("✖ Cancelar", "wz:" + zone)]])
+                return self.send(_("⚠️ Invalid name. Use lowercase letters, digits and hyphens (max. 20)."),
+                                 [[self.b(_("✖ Cancel"), "wz:" + zone)]])
             return self.send(*self.view_team_workers(zone, name))
         if not self.selected or not self.find_session(self.selected):
             ss = [s for s in self.prama.sessions() if SESSION_RE.match(s["name"])]
@@ -886,7 +949,7 @@ class Bot:
             else:
                 self.selected = ""
                 text_m, kb = self.view_menu()
-                return self.send("⚠️ No hay una sesión seleccionada. Elige una:\n\n" + text_m, kb)
+                return self.send(_("⚠️ No session selected. Choose one:") + "\n\n" + text_m, kb)
         return self.deliver_text(self.selected, text)
 
     # ── dispatch ──
@@ -918,13 +981,27 @@ class Bot:
         text = msg.get("text") or ""
         age = time.time() - float(msg.get("date") or 0)
         if age > BACKLOG_MAX_AGE:
-            log("ignorado mensaje antiguo (%ds): %s" % (age, text[:40]))
+            log(_("ignored old message (%ds): %s") % (age, text[:40]))
             return
-        log("mensaje: %s" % text[:80])
+        log(_("message: %s") % text[:80])
         try:
             self.on_text(text)
         except CliError as ex:
             self.send(*self.view_error(str(ex)))
+
+    def command_menu(self):
+        """setMyCommands list: the command names and descriptions of the active language."""
+        return [{"command": c, "description": d} for c, d in (
+            ("menu", _("Main menu")),
+            ("status", _("Sessions with CPU/RAM")),
+            ("logs", _("View the screen: /logs [session]")),
+            ("send", _("Write: /send <session> <text>")),
+            ("launch", _("Launch: /launch <agent> <zone> [role]")),
+            (command_name("teams"), _("Teams: status, talk, add, close")),
+            (command_name("quota"), _("5h / 7d quota per agent")),
+            (command_name("reports"), _("prama bugs reported by agents")),
+            ("help", _("Help")),
+        )]
 
     def startup(self):
         backoff = 1
@@ -933,30 +1010,20 @@ class Bot:
                 me = self.api.call("getMe")
                 break
             except NetError as ex:
-                log("sin red (%s); reintento en %ds" % (ex, backoff))
+                log(_("no network (%s); retrying in %ds") % (ex, backoff))
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 60)
         if not me.get("ok"):
-            log("getMe falló: %s" % me.get("description"))
+            log(_("getMe failed: %s") % me.get("description"))
             if me.get("error_code") in (401, 404):
-                log("token inválido; ejecuta: prama-agent telegram setup")
+                log(_("invalid token; run: prama-agent telegram setup"))
                 sys.exit(EXIT_CONFIG)
             raise NetError("getMe: %s" % me.get("description"))
-        log("conectado como @%s; chat autorizado %s" % ((me.get("result") or {}).get("username"),
-                                                       self.chat_id))
+        log(_("connected as @%s; authorized chat %s") % ((me.get("result") or {}).get("username"),
+                                                          self.chat_id))
         try:
             self.api.call("deleteWebhook", {"drop_pending_updates": False})
-            self.api.call("setMyCommands", {"commands": [
-                {"command": "menu", "description": "Menú principal"},
-                {"command": "status", "description": "Sesiones con CPU/RAM"},
-                {"command": "logs", "description": "Ver pantalla: /logs [sesión]"},
-                {"command": "send", "description": "Escribir: /send <sesión> <texto>"},
-                {"command": "launch", "description": "Lanzar: /launch <agente> <zona> [rol]"},
-                {"command": "equipos", "description": "Equipos: estado, hablar, sumar, cerrar"},
-                {"command": "cuota", "description": "Cuota 5h / 7d por agente"},
-                {"command": "reportes", "description": "Fallos de prama reportados por agentes"},
-                {"command": "help", "description": "Ayuda"},
-            ]})
+            self.api.call("setMyCommands", {"commands": self.command_menu()})
         except NetError as ex:
             log("setMyCommands: %s" % ex)
 
@@ -971,13 +1038,13 @@ class Bot:
             try:
                 res = self.api.call("getUpdates", payload, timeout=POLL_TIMEOUT + 15)
             except NetError as ex:
-                log("red: %s; reintento en %ds" % (ex, backoff))
+                log(_("network: %s; retrying in %ds") % (ex, backoff))
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 60)
                 continue
             if not res.get("ok"):
                 code = res.get("error_code")
-                log("getUpdates falló (%s): %s" % (code, res.get("description")))
+                log(_("getUpdates failed (%s): %s") % (code, res.get("description")))
                 if code == 401:
                     sys.exit(EXIT_CONFIG)
                 wait = (res.get("parameters") or {}).get("retry_after") or 0
@@ -992,7 +1059,7 @@ class Bot:
                 try:
                     self.handle(upd)
                 except Exception as ex:  # one bad update must never kill the loop
-                    log("error procesando update %s: %r" % (uid, ex))
+                    log(_("error processing update %s: %r") % (uid, ex))
                     for l in traceback.format_exc().splitlines()[-6:]:
                         log("  " + l)
 
@@ -1001,24 +1068,24 @@ def main():
     global TOKEN
     path, conf = load_conf()
     if not path:
-        log("Telegram no está configurado (falta telegram.env). Ejecuta: prama-agent telegram setup")
+        log(_("Telegram is not configured (telegram.env is missing). Run: prama-agent telegram setup"))
         return EXIT_CONFIG
     TOKEN = conf.get("TELEGRAM_BOT_TOKEN", "")
     chat = conf.get("TELEGRAM_CHAT_ID", "")
     if not re.match(r"^[0-9]+:[A-Za-z0-9_-]{20,}$", TOKEN) or not re.match(r"^-?[0-9]+$", chat):
-        log("telegram.env incompleto o inválido (%s). Ejecuta: prama-agent telegram setup" % path)
+        log(_("telegram.env is incomplete or invalid (%s). Run: prama-agent telegram setup") % path)
         return EXIT_CONFIG
     self_path = os.environ.get("SELF_PATH", "")
     if not self_path or not os.access(self_path, os.X_OK):
-        log("SELF_PATH no apunta a prama-agent ejecutable: %r" % self_path)
+        log(_("SELF_PATH does not point to an executable prama-agent: %r") % self_path)
         return EXIT_CONFIG
     base = os.environ.get("PRAMA_TG_API_BASE") or "https://api.telegram.org"
     bot = Bot(Api(TOKEN, base), Prama(self_path), chat, conf.get("TELEGRAM_USER_ID", ""))
-    log("iniciando (config %s, servidor tmux %s)" % (path, os.environ.get("PRAMA_TMUX_SOCKET", "prama")))
+    log(_("starting (config %s, tmux server %s)") % (path, os.environ.get("PRAMA_TMUX_SOCKET", "prama")))
     try:
         bot.loop()
     except KeyboardInterrupt:
-        log("detenido")
+        log(_("stopped"))
         return 0
     return 0
 
