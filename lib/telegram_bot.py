@@ -828,7 +828,6 @@ class Bot:
                 continue
             lines.append("<b>%s %s</b>" % (icons[st], e(heads[st])))
             for t in group[:MAX_LISTED]:
-                owner = str(t.get("owner") or "").rsplit("-", 1)[-1] if t.get("owner") else ""
                 flags = [flagtxt[f] for f in str(t.get("flags", "")).split() if f in flagtxt]
                 if any(f.startswith("overlap:") for f in str(t.get("flags", "")).split()):
                     flags.append(_("⇄ same files"))
