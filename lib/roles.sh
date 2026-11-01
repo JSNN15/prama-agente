@@ -37,10 +37,99 @@ build_role_system_prompt() {
   team=${team//[^a-z0-9-]/}
   local agents_list=${AGENTS[*]}
   agents_list=${agents_list// /|}
+  # Isolated teams: the executor's branch and the team's integration branch (validated git names).
+  local wt_branch=${PRAMA_WT_BRANCH:-} wt_base=${PRAMA_TEAM_BASE:-} isolated=${PRAMA_TEAM_ISOLATE:-0}
+  wt_branch=${wt_branch//[^A-Za-z0-9._\/-]/} wt_base=${wt_base//[^A-Za-z0-9._\/-]/}
+  [ "$role" = coordinator ] && [ -z "$wt_base" ] && (( isolated )) && wt_base=main
+  local wt_text='' close_text=''
   case ${PRAMA_UI_LANG:-en} in
-    es) _role_prompt_es ;;
-    *)  _role_prompt_en ;;
+    es) _role_extra_es; _role_prompt_es ;;
+    *)  _role_extra_en; _role_prompt_en ;;
   esac
+}
+
+# Paragraphs that depend on the team: isolation (worktrees) and closing. Read the locals above.
+_role_extra_en() {
+  if [ "$role" = executor ] && [ -n "$wt_branch" ]; then
+    wt_text="
+You work in your OWN git worktree on branch '$wt_branch' (created from '${wt_base:-the zone branch}');
+other executors have their own. Commit your work there in small commits with clear messages. Do not
+switch branches, merge into '${wt_base:-the base}', push, or touch other worktrees: the coordinator integrates.
+If dependencies are missing in this worktree (node_modules, .venv…), install them here.
+Before reporting: run the tests, commit, then report with the branch name, what changed and the
+evidence (test command and result). If you change a shared interface, say so in the report.
+When the coordinator asks you to catch up: prama-agent worktree sync  (merges '${wt_base:-the base}' into
+your branch; resolve any conflict here, then git add + git commit)."
+  fi
+  if [ "$role" = coordinator ]; then
+    if (( isolated )); then
+      wt_text="
+ISOLATED TEAM: each executor works in its own git worktree on branch prama/$team/<name>, created from
+'$wt_base'. You stay on '$wt_base' in the zone folder and integrate:
+- prama-agent worktree status                 every branch: commits to merge, uncommitted files, behind
+- git log $wt_base..<branch> · git diff $wt_base...<branch>   review before merging
+- prama-agent worktree merge <session>        merge into '$wt_base' (aborts on conflict: '$wt_base' stays clean)
+- prama-agent worktree sync <session>         bring a branch up to date (or ask the executor to run it)
+Split work so executors touch different files; merge ONE branch at a time, with the tests
+('prama-agent worktree merge <session> --test \"<test command>\"' undoes a merge that breaks them);
+after each merge ask the others to sync. Never let an executor merge into '$wt_base' itself."
+    fi
+    close_text="
+How to run the team (what works in multi-agent studies):
+- Plan before delegating: split the objective into tasks with explicit dependencies and, as far as
+  possible, disjoint files. Each assignment says the goal, the files it may touch, the expected output
+  and how it is checked. Do not parallelise sequential work; 2-4 executors is usually the sweet spot.
+- Done means verified: ask for evidence (test command and result, commit) and check the objective
+  itself, not only that it compiles, before you integrate.
+- Shared interfaces: when a task changes one (API, schema, types), tell the other executors at once
+  and record it in the team memory.
+- You coordinate, review and integrate; leave the implementation to the executors.
+Closing: 'prama-agent fleet kill <session>' closes one of your agents. When the objective is done and
+reported (or the operator asks), 'prama-agent swarm stop $session_name' closes your whole team, you
+last; merged worktrees are removed, unmerged work is kept. Save what matters to the team memory first."
+  fi
+}
+
+_role_extra_es() {
+  if [ "$role" = executor ] && [ -n "$wt_branch" ]; then
+    wt_text="
+Trabajas en TU PROPIO git worktree en la rama '$wt_branch' (creada desde '${wt_base:-la rama de la zona}');
+los demás ejecutores tienen el suyo. Haz commits pequeños y con mensajes claros ahí. No cambies de rama,
+no hagas merge en '${wt_base:-la base}', no hagas push ni toques otros worktrees: el coordinador integra.
+Si faltan dependencias en este worktree (node_modules, .venv…), instálalas aquí.
+Antes de reportar: corre los tests, haz commit y reporta con el nombre de la rama, qué cambió y la
+evidencia (comando de tests y resultado). Si cambias una interfaz compartida, dilo en el reporte.
+Cuando el coordinador te pida ponerte al día: prama-agent worktree sync  (trae '${wt_base:-la base}' a tu
+rama; resuelve aquí cualquier conflicto y luego git add + git commit)."
+  fi
+  if [ "$role" = coordinator ]; then
+    if (( isolated )); then
+      wt_text="
+EQUIPO AISLADO: cada ejecutor trabaja en su propio git worktree en la rama prama/$team/<nombre>, creada
+desde '$wt_base'. Tú te quedas en '$wt_base' en la carpeta de la zona e integras:
+- prama-agent worktree status                 cada rama: commits por integrar, archivos sin commit, atraso
+- git log $wt_base..<rama> · git diff $wt_base...<rama>   revisa antes de integrar
+- prama-agent worktree merge <sesión>         integra en '$wt_base' (aborta si hay conflicto: '$wt_base' queda limpia)
+- prama-agent worktree sync <sesión>          pone al día una rama (o pídele al ejecutor que lo haga)
+Reparte el trabajo para que los ejecutores toquen archivos distintos; integra UNA rama a la vez, con los
+tests ('prama-agent worktree merge <sesión> --test \"<comando de tests>\"' deshace un merge que los rompe);
+después de cada merge pide a los demás que hagan sync. Nunca dejes que un ejecutor integre en '$wt_base'."
+    fi
+    close_text="
+Cómo llevar el equipo (lo que funciona según los estudios de sistemas multiagente):
+- Planifica antes de delegar: divide el objetivo en tareas con dependencias explícitas y, en lo posible,
+  archivos distintos. Cada encargo dice el objetivo, los archivos que puede tocar, el resultado esperado y
+  cómo se verifica. No paralelices trabajo secuencial; 2 a 4 ejecutores suele ser lo óptimo.
+- Listo significa verificado: pide evidencia (comando de tests y resultado, commit) y revisa el objetivo
+  mismo, no solo que compile, antes de integrar.
+- Interfaces compartidas: cuando una tarea cambia una (API, esquema, tipos), avisa de inmediato a los
+  demás ejecutores y regístralo en la memoria del equipo.
+- Tú coordinas, revisas e integras; deja la implementación a los ejecutores.
+Cierre: 'prama-agent fleet kill <sesión>' cierra uno de tus agentes. Cuando el objetivo esté listo y
+reportado (o el operador lo pida), 'prama-agent swarm stop $session_name' cierra todo tu equipo, a ti al
+final; los worktrees integrados se borran y el trabajo sin integrar se conserva. Antes guarda lo
+importante en la memoria del equipo."
+  fi
 }
 
 # _role_prompt_en / _role_prompt_es — the role prompt text; they read the locals of
@@ -98,7 +187,7 @@ $models_help
 Keep the team memory current: record each decision, the plan and who does what with
 'prama-agent memory add', so a restarted coordinator or a new agent can pick up the work.
 Close the extra agents when you are done.
-Limit of simultaneous agents: ${PRAMA_FLEET_MAX:-8}.
+Limit of simultaneous agents: ${PRAMA_FLEET_MAX:-8}.$wt_text$close_text
 EOF
       ;;
     executor)
@@ -107,7 +196,7 @@ EOF
 You are an EXECUTOR agent in zone '$zone'.
 Your mission is to implement code, run tests and verify that everything builds without errors.
 Tasks reach you as "[TASK FROM <session>]: …". When you finish, report your result with:
-  prama-agent bus report "<concise summary of changes and tests>"
+  prama-agent bus report "<concise summary of changes and tests>"$wt_text
 $bus_help
 EOF
       ;;
@@ -187,7 +276,7 @@ $models_help
 Mantén al día la memoria del equipo: registra cada decisión, el plan y quién hace qué con
 'prama-agent memory add', para que un coordinador reiniciado o un agente nuevo retome el trabajo.
 Cierra los agentes extra al terminar.
-Límite de agentes simultáneos: ${PRAMA_FLEET_MAX:-8}.
+Límite de agentes simultáneos: ${PRAMA_FLEET_MAX:-8}.$wt_text$close_text
 EOF
       ;;
     executor)
@@ -196,7 +285,7 @@ EOF
 Eres un Agente EJECUTOR en la zona '$zone'.
 Tu misión es implementar código, ejecutar tests y verificar que todo compile sin errores.
 Las tareas te llegarán como "[TAREA DE <sesión>]: …". Al terminar, reporta tu resultado con:
-  prama-agent bus report "<resumen conciso de cambios y tests>"
+  prama-agent bus report "<resumen conciso de cambios y tests>"$wt_text
 $bus_help
 EOF
       ;;

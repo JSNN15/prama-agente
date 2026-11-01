@@ -18,13 +18,14 @@ Internal design reference for contributors (English only). User documentation:
 | `lib/health.sh` | CLI hooks (claude, agy) → health file, status line → quota file, `BLOCKED`/quota alerts, fleet watchdog, queued delivery |
 | `lib/fleet.sh` | `prama-agent fleet …`: spawn/kill/model/edit/restart with guard rails |
 | `lib/feedback.sh` | `prama-agent feedback …`: bug reports from agents and the operator (local, redacted, deduplicated) |
+| `lib/worktrees.sh` | Isolated teams: worker branches (`prama/<team>/<name>`), `worktree status/merge/sync/clean` |
 | `lib/memory.sh` | `prama-agent memory …`: shared team / zone notes (`$PRAMA_STATE_HOME/memory`) |
 | `lib/prefs.sh` | `lang` and `theme`: apply, save (`_config_set`) and reload the tmux config |
 | `lib/setup.sh` | First steps: `setup` wizard, `login` (agent sign-in status), `zones add/remove/scan` (`zones.conf`) |
 | `lib/telegram.sh` + `lib/telegram_bot.py` | Telegram bridge |
 | `lib/tui.sh` | Interactive full-screen TUI |
 
-Source order: `core.sh` → `ui.sh` → `agents.sh` → `roles.sh` → `bus.sh` → `swarm.sh` → `health.sh` → `fleet.sh` →
+Source order: `core.sh` → `ui.sh` → `agents.sh` → `roles.sh` → `bus.sh` → `swarm.sh` → `worktrees.sh` → `health.sh` → `fleet.sh` →
 `feedback.sh` → `memory.sh` → `setup.sh` → `prefs.sh` → `telegram.sh` → `tui.sh` (`core.sh` sources `i18n.sh`). `--internal-hook` and `--internal-statusline` are fast paths that only source
 `core.sh` + `health.sh`; outside prama panes the hook exits before sourcing anything (agy's hooks are
 global), and the status line reuses its last output for `PRAMA_SL_MIN` seconds using bash builtins only
@@ -72,6 +73,9 @@ creates private dirs).
     Strings are translated when used, never at source time (the language is known after config.env).
 17. **Memory is data, scoped like teams.** Notes are single redacted lines in private files, never
     sourced; an agent writes only to its own team's (or zone's) memory and cannot clear one.
+18. **The base branch of an isolated team never stays broken.** `worktree merge` needs a clean base
+    checkout, aborts on conflict and undoes a merge whose `--test` fails; only the team's coordinator
+    or the operator merges. Cleaning never deletes unmerged or uncommitted work.
 
 ## core.sh API
 

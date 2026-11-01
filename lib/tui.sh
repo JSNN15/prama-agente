@@ -1694,7 +1694,8 @@ _tui_cockpit() {
 # tui_new_team — zone → team → worker agent → how many → objective, then `swarm` (opens the
 # cockpit). A zone can hold several teams: an existing name adds agents to that team.
 tui_new_team() {
-  local step=1 rc i zone='' team='' wa='' n=2 task='' coord=claude tx l_menu l_new l_zone
+  local step=1 rc i zone='' team='' wa='' n=2 task='' coord=claude tx l_menu l_new l_zone iso=''
+  local -a IL=() IM=() IA=(1 1) IT=('' '')
   is_in claude "${AGENTS[@]}" && agent_installed claude || coord=${AGENTS[0]}
   TUI_GIT_CACHE=()
   _tui_agent_lists
@@ -1725,6 +1726,18 @@ tui_new_team() {
            tui_alert "$t1" "$t2"
            continue
          fi
+         # A new team in a git zone chooses its isolation; an existing team keeps its own.
+         iso=''
+         if ! find_team "$zone" "$team" >/dev/null 2>&1 && git_can_isolate "$(zone_dir "$zone")"; then step=17; else step=2; fi ;;
+      17) IL=() IM=()
+         _tv tx '⎇ A branch per agent (recommended)'; IL+=("$tx")
+         _tv tx 'each executor in its own git worktree; the coordinator reviews and merges'; IM+=("$tx")
+         _tv tx '▣ Shared folder'; IL+=("$tx")
+         _tv tx 'everyone edits the zone folder (fine for one executor or read-only work)'; IM+=("$tx")
+         _tv tx 'How will the team work on the code?'
+         rc=0; tui_list_run "$tx" IL IM IA IT $(( ${PRAMA_SWARM_ISOLATE:-1} ? 0 : 1 )) || rc=$?
+         if (( rc )); then step=15; continue; fi
+         if (( CHOICE == 0 )); then iso=--isolate; else iso=--shared; fi
          step=2 ;;
       2) _tv tx 'Agent for the workers'
          rc=0; tui_list_run "$tx" AG_LABELS AG_METAS AG_AVAIL AG_TARGETS -1 || rc=$?
@@ -1738,7 +1751,7 @@ tui_new_team() {
          _tv tx 'Objective for the coordinator (optional)'
          tui_prompt "$tx" task || task=''
          TUI_LIST_CRUMBS=''; tui_invalidate
-         if ! _tui_run_fullscreen 1 subcmd_swarm "$zone" --team "$team" --coord "$coord" --workers "$wa:$n" ${task:+--task "$task"}; then
+         if ! _tui_run_fullscreen 1 subcmd_swarm "$zone" --team "$team" --coord "$coord" --workers "$wa:$n" ${iso:+"$iso"} ${task:+--task "$task"}; then
            local t1 t2; _tv t1 'Could not create the team'; _tv t2 'check prama-agent doctor'
            tui_alert "$t1" "${TUI_LAST_ERR:-$t2}"
          fi
@@ -1790,7 +1803,7 @@ _tui_team_menu() {
   label=$(team_label "$c")
   _tv l_menu 'Menu'; _tv l_teams 'Teams'
   while tmx_has "$c"; do
-    local -a AL=() AM=() AA=() AT=() AK=(cockpit msg grow memory note enter close)
+    local -a AL=() AM=() AA=() AT=() AK=(cockpit msg grow memory note)
     _tui_team_members "$c"
     _tv tx '▦ Open the cockpit';            AL+=("$tx"); _tv tx 'live split view: coordinator, agents and bus'; AM+=("$tx")
     _tv tx '✉ Message the coordinator';     AL+=("$tx"); _tv tx 'a new objective, a question, a change of plan'; AM+=("$tx")
@@ -1798,9 +1811,14 @@ _tui_team_menu() {
     local nm; nm=$(( $(memory_count "$(state_get "$c" ZONE)" "$(team_name "$c")") + $(memory_count "$(state_get "$c" ZONE)") ))
     _tv tx '🧠 Team memory (%d)' "$nm";     AL+=("$tx"); _tv tx 'decisions and findings the agents keep; read them in full'; AM+=("$tx")
     _tv tx '✎ Add a note';                  AL+=("$tx"); _tv tx 'a decision or convention every agent of the team will read'; AM+=("$tx")
+    if team_isolated "$c"; then
+      _tv tx '⎇ Branches';                  AL+=("$tx"); _tv tx "each executor's branch: commits to merge, uncommitted, behind"; AM+=("$tx"); AK+=(branches)
+    fi
+    AK+=(enter close)
     _tv tx '↗ Enter the coordinator';       AL+=("$tx"); _tv tx 'talk to it directly; %s brings you back' "${PRAMA_MENU_KEY//M-/Alt+}"; AM+=("$tx")
     _tv tx '✖ Close the team';              AL+=("$tx"); _tv tx 'stops the coordinator and its %d agent(s)' "${#TM[@]}"; AM+=("$tx")
-    AA=(1 1 1 1 1 1 1) AT=("$c" "$c" "$c" "$c" "$c" "$c" "$c")
+    AA=() AT=()
+    for tx in "${AL[@]}"; do AA+=(1); AT+=("$c"); done
     TUI_LIST_CRUMBS="$C_MUTED$l_menu › $l_teams$T_OFF $C_MUTED›$T_OFF $T_BOLD$label$T_OFF"
     _tv tx 'Team %s' "$label"
     rc=0; tui_list_run "$tx" AL AM AA AT 0 || rc=$?
@@ -1810,6 +1828,9 @@ _tui_team_menu() {
                if ! _tui_run_fullscreen 1 subcmd_cockpit "$c"; then _tv tx 'Could not open the cockpit'; tui_alert "$tx" "${TUI_LAST_ERR:-$c}"; fi ;;
       msg)     TUI_ROLE_CACHE[$c]=coordinator; _tui_task "$c" ;;
       grow)    _tui_team_grow "$c" ;;
+      branches) tui_suspend
+               { wt_status "$c"; printf '\n'; } 2>&1 | less -R "-Ps$label  (q) " 2>/dev/null
+               tui_resume ;;
       memory)  tui_suspend
                { subcmd_memory show "$c"; printf '\n'; } 2>&1 | less -R "-Ps$label  (q) " 2>/dev/null
                tui_resume ;;

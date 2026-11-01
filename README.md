@@ -19,7 +19,7 @@ billing problem.
 It is plain bash on top of a dedicated tmux server: no daemon to install, no database, no Node.js.
 
 ```
- ◆ PRAMA AGENT v6.4.0  server-01                          ● 6 active   LOAD 1.63 · RAM 5120M (21%)
+ ◆ PRAMA AGENT v6.5.0  server-01                          ● 6 active   LOAD 1.63 · RAM 5120M (21%)
  Next agent ›  o  Role ✦ executor   y  Permissions ● ASK   e  Remote off   p  Profile default
 ╭─ Agents and teams ───────────────────────── 6 ─╮╭─ ◉ prama-backend-sec-coord ────────────────────╮
 │   ● ▍ backend · docs (1)   ready     ▱▱▱▱   0% ││ ❖ coordinator · ● ready · CPU 0% · 99M · up 0… │
@@ -78,7 +78,7 @@ New here? **[Getting started](docs/GETTING_STARTED.md)** goes from an empty serv
 including sign-in, models and zones.
 
 Without `sudo` it installs for the current user (`~/.local/bin`, `~/.config/prama-agent`). From a clone:
-`sudo make install` or `make install`. Update later with `prama-agent update` (or `update v6.4.0`).
+`sudo make install` or `make install`. Update later with `prama-agent update` (or `update v6.5.0`).
 Tested on Ubuntu 22.04 / 24.04 and Debian 12 (tmux 3.2a, 3.3a and 3.4), with any login shell.
 
 Requirements: bash ≥ 4.4, tmux ≥ 3.2 (3.3+ for clickable status-bar buttons and the phone layout), git. Recommended: `jq`
@@ -157,6 +157,33 @@ from the cockpit:
 
 Keys are configurable (`PRAMA_MENU_KEY`, `PRAMA_NAV_KEY`, `PRAMA_COCKPIT_KEY`); the buttons work by
 touch in Termius, Blink or any terminal with mouse support.
+
+### Isolated teams: a branch per agent
+
+Several agents editing one folder overwrite each other. So a new team in a git zone is **isolated**:
+each executor works in its own git worktree (outside the repository) on branch `prama/<team>/<name>`,
+created from the branch the zone is on; the coordinator stays on that branch and integrates.
+
+```bash
+prama-agent swarm backend --team sec --workers agy:2        # isolated (default; --shared to opt out)
+prama-agent worktree status backend --team sec              # each branch: to merge, uncommitted, behind
+prama-agent worktree merge prama-backend-sec-agy --test "pytest -q"   # merge; undone if the tests fail
+prama-agent worktree sync prama-backend-sec-agy-2           # bring a branch up to date with the base
+```
+
+- `merge` refuses a dirty base checkout, and **aborts on conflict**: the base never stays broken; the
+  executor runs `worktree sync`, resolves in its own worktree, commits, and the coordinator merges again.
+  With `--test` (or `PRAMA_MERGE_TEST`) a merge that breaks the tests is undone.
+- Only the coordinator (or you) merges; an executor only commits to its branch and syncs itself.
+- Role prompts carry the protocol: executors commit with evidence, coordinators split work by files,
+  merge one branch at a time and ask the others to sync.
+- `swarm stop` removes the worktrees that are clean and merged and **keeps** any with unmerged or
+  uncommitted work (`worktree clean` does the same later).
+- Dependencies: each worktree is a fresh checkout. `.env` files are copied (`PRAMA_WORKTREE_COPY_FILES`);
+  `PRAMA_WORKTREE_LINK="node_modules .venv"` shares heavy directories with the main checkout instead
+  of reinstalling them; otherwise executors install what they need.
+- In the menu, the new-team wizard asks *a branch per agent* or *shared folder*, and **Teams →
+  Branches** shows the state of every branch; in Telegram, team → **⎇ Branches**.
 
 ### Team memory
 
@@ -354,6 +381,9 @@ prama-agent claude backend --profile deepseek
 | `PRAMA_MENU_KEY` / `PRAMA_NAV_KEY` / `PRAMA_COCKPIT_KEY` | `M-m` / `M-a` / `M-c` | navigation keys inside tmux |
 | `PRAMA_COMPACT_COLS` | `100` | clients narrower than this get the phone layout |
 | `PRAMA_FEEDBACK_MAX_OPEN` | `50` | open bug reports before agents are asked to wait |
+| `PRAMA_SWARM_ISOLATE` | `1` | new teams in a git zone: a worktree and branch per executor |
+| `PRAMA_WORKTREE_LINK` | — | directories symlinked from the main checkout into each worktree (`node_modules .venv`) |
+| `PRAMA_MERGE_TEST` | — | test command run after every `worktree merge` (the merge is undone if it fails) |
 | `PRAMA_LANG` | `auto` | interface language: `en`, `es`, `auto` (from the locale); `prama-agent lang` |
 | `PRAMA_THEME` | `midnight` | color theme; `prama-agent theme` lists them |
 | `PRAMA_TUI_MOUSE` | `1` | mouse and touch in the menu |

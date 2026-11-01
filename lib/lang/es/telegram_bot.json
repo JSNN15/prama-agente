@@ -180,5 +180,13 @@
   "<b>🔔 Notifications</b>": "<b>🔔 Avisos</b>",
   "Sending: <b>%s</b>": "Enviando: <b>%s</b>",
   "🔕 Without sound until %s": "🔕 Sin sonido hasta las %s",
-  "🔔 Sound on": "🔔 Con sonido"
+  "🔔 Sound on": "🔔 Con sonido",
+  "⎇ Branches": "⎇ Ramas",
+  "<b>⎇ Branches · %s</b>": "<b>⎇ Ramas · %s</b>",
+  "%d to merge": "%d por integrar",
+  "%d uncommitted": "%d sin commit",
+  "%d behind": "%d atrás",
+  "up to date": "al día",
+  "<i>This team shares the zone folder (no branches per agent).</i>": "<i>Este equipo comparte la carpeta de la zona (sin ramas por agente).</i>",
+  "The coordinator merges them (prama-agent worktree merge). Ask it from 💬 Talk.": "El coordinador las integra (prama-agent worktree merge). Pídeselo desde 💬 Hablar."
 }

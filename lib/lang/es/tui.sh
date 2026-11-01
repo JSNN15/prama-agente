@@ -315,4 +315,11 @@ I18N+=(
   ['Note for the memory of %s']='Nota para la memoria de %s'
   ['Saved to the memory of %s']='Guardado en la memoria de %s'
   ['Could not save the note']='No se pudo guardar la nota'
+  ['⎇ A branch per agent (recommended)']='⎇ Una rama por agente (recomendado)'
+  ['each executor in its own git worktree; the coordinator reviews and merges']='cada ejecutor en su propio git worktree; el coordinador revisa e integra'
+  ['▣ Shared folder']='▣ Carpeta compartida'
+  ['everyone edits the zone folder (fine for one executor or read-only work)']='todos editan la carpeta de la zona (sirve para un ejecutor o trabajo de solo lectura)'
+  ['How will the team work on the code?']='¿Cómo trabajará el equipo sobre el código?'
+  ['⎇ Branches']='⎇ Ramas'
+  ["each executor's branch: commits to merge, uncommitted, behind"]='la rama de cada ejecutor: commits por integrar, sin commit, atraso'
 )

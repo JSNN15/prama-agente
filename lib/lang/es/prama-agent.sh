@@ -73,7 +73,6 @@ I18N+=(
   ['Git refused to remove %s (unsaved changes?). Check and use: git -C %s worktree remove --force %s']='Git rechazó borrar %s (¿cambios sin guardar?). Revisa y usa: git -C %s worktree remove --force %s'
   ["Worktree removed: %s (branch '%s' is kept)"]='Worktree eliminado: %s (la rama '\''%s'\'' se conserva)'
   ['Pruned: %s']='Podado: %s'
-  ["Unknown action: '%s' (list | create | remove | prune)"]='Acción desconocida: '\''%s'\'' (list | create | remove | prune)'
 
   # profiles, mcp
   ['LLM PROFILES']='PERFILES LLM'
